@@ -1,16 +1,17 @@
-"""Stats bar widget showing HP, Turn, Level, Score, Hunger."""
+"""Stats bar widget showing HP, Turn, Level, Score, Hunger, BALROG Progress."""
 
 from textual.widgets import Static
 from rich.text import Text
 
 from ..events import GameStateUpdated
+from src.scoring import Progress
 
 
 class StatsBar(Static):
     """
     Horizontal status bar showing key stats.
 
-    Format: HP: 15/15 | Turn: 1234 | DL:1 | Score: 42 | Hungry
+    Format: HP: 15/15 | Turn: 1234 | DL:1 | XL:1 | BALROG: 0.00% | Hungry
     """
 
     DEFAULT_CSS = """
@@ -28,9 +29,11 @@ class StatsBar(Static):
         self._max_hp = 0
         self._turn = 0
         self._level = 1
+        self._xp_level = 1
         self._score = 0
         self._hunger = "Not Hungry"
         self._message = ""
+        self._progress = Progress()  # BALROG progress tracker
 
     def on_mount(self) -> None:
         """Initialize display when mounted."""
@@ -42,9 +45,12 @@ class StatsBar(Static):
         self._max_hp = event.max_hp
         self._turn = event.turn
         self._level = event.dungeon_level
+        self._xp_level = event.xp_level
         self._score = event.score
         self._hunger = event.hunger
         self._message = event.message
+        # Update BALROG progress (tracks highest achieved)
+        self._progress.update(self._level, self._xp_level)
         self._refresh_display()
 
     def _refresh_display(self) -> None:
@@ -69,8 +75,21 @@ class StatsBar(Static):
         text.append(" | DL:", style="dim")
         text.append(f"{self._level}")
 
-        text.append(" | Score: ", style="dim")
-        text.append(f"{self._score}")
+        text.append(" | XL:", style="dim")
+        text.append(f"{self._xp_level}")
+
+        # BALROG progress (win probability)
+        balrog_pct = self._progress.progression_percent
+        text.append(" | BALROG: ", style="dim")
+        if balrog_pct >= 50:
+            balrog_style = "green bold"
+        elif balrog_pct >= 10:
+            balrog_style = "cyan"
+        elif balrog_pct > 0:
+            balrog_style = "yellow"
+        else:
+            balrog_style = "white"
+        text.append(f"{balrog_pct:.2f}%", style=balrog_style)
 
         # Hunger status with color
         hunger_colors = {

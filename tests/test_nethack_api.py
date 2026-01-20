@@ -100,10 +100,10 @@ class TestNetHackAPIQueries:
 
         assert isinstance(monsters, list)
 
-    def test_get_adjacent_monsters(self, nethack_api):
-        """Test get_adjacent_monsters method."""
+    def test_get_adjacent_hostiles(self, nethack_api):
+        """Test get_adjacent_hostiles method."""
         nethack_api.reset()
-        monsters = nethack_api.get_adjacent_monsters()
+        monsters = nethack_api.get_adjacent_hostiles()
 
         assert isinstance(monsters, list)
 
@@ -222,31 +222,6 @@ class TestNetHackAPIPathfinding:
         assert isinstance(result, TargetResult)
         # May or may not find unexplored tiles
         assert result.position is None or isinstance(result.position, Position)
-
-    def test_find_stairs_up(self, nethack_api):
-        """Test finding stairs up returns TargetResult."""
-        nethack_api.reset()
-
-        # Use allow_with_hostiles=True to bypass hostile check for this test
-        result = nethack_api.find_stairs_up(allow_with_hostiles=True)
-
-        from src.api import TargetResult
-        assert isinstance(result, TargetResult)
-        # Stairs up usually not on level 1
-        assert result.position is None or isinstance(result.position, Position)
-
-    def test_find_stairs_down(self, nethack_api):
-        """Test finding stairs down returns TargetResult."""
-        nethack_api.reset()
-
-        # Use allow_with_hostiles=True to bypass hostile check for this test
-        result = nethack_api.find_stairs_down(allow_with_hostiles=True)
-
-        from src.api import TargetResult
-        assert isinstance(result, TargetResult)
-        # May or may not be visible
-        assert result.position is None or isinstance(result.position, Position)
-
 
 class TestNetHackAPIKnowledge:
     """Tests for API knowledge methods."""

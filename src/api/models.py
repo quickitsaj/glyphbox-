@@ -491,8 +491,14 @@ class AutoexploreResult:
 
     @property
     def success(self) -> bool:
-        """Whether exploration completed successfully."""
-        return self.stop_reason in ("fully_explored", "feature", "stairs")
+        """Whether autoexplore ran successfully (not whether exploration is complete)."""
+        # Only actual errors are failures - all stop reasons are valid outcomes
+        return self.stop_reason != "no_observation"
+
+    @property
+    def exploration_complete(self) -> bool:
+        """Whether the level is fully explored."""
+        return self.stop_reason == "fully_explored"
 
     @property
     def needs_attention(self) -> bool:

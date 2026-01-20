@@ -132,6 +132,9 @@ class LLMResponse:
     usage: Optional[dict] = None
     finish_reason: Optional[str] = None
     tool_call: Optional[ToolCall] = None  # Tool call if model invoked a tool
+    # Extended thinking / reasoning support (OpenRouter)
+    reasoning: Optional[str] = None  # The model's thinking/reasoning text
+    reasoning_details: Optional[list] = None  # Full reasoning blocks for re-feeding
 
 
 class LLMClient:
@@ -148,6 +151,7 @@ class LLMClient:
         base_url: str = "https://openrouter.ai/api/v1",
         temperature: float = 0.2,
         api_key: Optional[str] = None,
+        reasoning: Optional[str] = None,
     ):
         """
         Initialize the LLM client.
@@ -158,10 +162,16 @@ class LLMClient:
             base_url: API base URL
             temperature: Sampling temperature
             api_key: API key (defaults to OPENROUTER_API_KEY env var)
+            reasoning: Reasoning effort level ("none", "minimal", "low", "medium", "high", "xhigh")
+                      or None to disable. Maps to OpenRouter's reasoning.effort parameter.
         """
         self.provider = provider
         self.model = model
         self.temperature = temperature
+        # Store reasoning effort (None or "none" means disabled)
+        self.reasoning_effort = None
+        if reasoning and reasoning.lower() != "none":
+            self.reasoning_effort = reasoning.lower()
 
         # Get API key from env if not provided
         if api_key is None:
@@ -180,7 +190,8 @@ class LLMClient:
             base_url=base_url,
         )
 
-        logger.info(f"LLMClient initialized: provider={provider}, model={model}")
+        reasoning_info = f", reasoning={self.reasoning_effort}" if self.reasoning_effort else ""
+        logger.info(f"LLMClient initialized: provider={provider}, model={model}{reasoning_info}")
 
     async def complete(
         self,
@@ -339,6 +350,7 @@ class LLMClient:
         system: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        max_tool_retries: int = 5,
     ) -> LLMResponse:
         """
         Generate a completion with tool calling.
@@ -349,6 +361,7 @@ class LLMClient:
             system: Optional system message
             temperature: Override default temperature
             max_tokens: Maximum tokens to generate
+            max_tool_retries: Max attempts to get a tool call (default 5)
 
         Returns:
             LLMResponse with tool_call populated if model invoked a tool
@@ -360,86 +373,124 @@ class LLMClient:
 
         full_messages.extend(messages)
 
-        # GPT-5.2+ may need different tool_choice handling on OpenRouter
-        # Use "auto" which is universally supported, model will still use tools
-        if "gpt-5.2" in self.model.lower() or "gpt-5-2" in self.model.lower():
-            tool_choice = "auto"
-        else:
-            tool_choice = "required"  # Legacy format for older models
+        # Use "auto" which is universally supported across all providers
+        # "required" is not supported by many models (GLM, some others)
+        # The system prompt already instructs the model to use tools
+        tool_choice = "auto"
 
-        kwargs = {
-            "model": self.model,
-            "messages": full_messages,
-            "temperature": temperature if temperature is not None else self.temperature,
-            "tools": tools,
-            "tool_choice": tool_choice,
-        }
-
-        # For non-GPT-5.2 models, require strict parameter support
-        # GPT-5.2 needs more flexible routing due to new tool_choice format
-        if "gpt-5.2" not in self.model.lower() and "gpt-5-2" not in self.model.lower():
-            kwargs["extra_body"] = {
-                "provider": {
-                    "require_parameters": True,
-                },
+        # Retry loop to ensure we get a tool call
+        for attempt in range(max_tool_retries):
+            kwargs: dict[str, Any] = {
+                "model": self.model,
+                "messages": full_messages,
+                "temperature": temperature if temperature is not None else self.temperature,
+                "tools": tools,
+                "tool_choice": tool_choice,
             }
 
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
 
-        # Log full request
-        llm_logger.log_request(
-            model=self.model,
-            messages=full_messages,
-            temperature=kwargs["temperature"],
-            max_tokens=max_tokens,
-        )
+            # Add reasoning configuration if enabled (OpenRouter)
+            if self.reasoning_effort:
+                kwargs["extra_body"] = {"reasoning": {"effort": self.reasoning_effort}}
 
-        try:
-            response = await self.client.chat.completions.create(**kwargs)
-        except Exception as e:
-            llm_logger.log_error(str(e), {"model": self.model})
-            raise
-
-        choice = response.choices[0]
-        content = choice.message.content or ""
-
-        # Extract tool call if present
-        tool_call_result = None
-        if choice.message.tool_calls and len(choice.message.tool_calls) > 0:
-            tc = choice.message.tool_calls[0]
-            try:
-                arguments = json.loads(tc.function.arguments)
-                tool_call_result = ToolCall(
-                    name=tc.function.name,
-                    arguments=arguments,
+            # Log full request (only on first attempt)
+            if attempt == 0:
+                llm_logger.log_request(
+                    model=self.model,
+                    messages=full_messages,
+                    temperature=kwargs["temperature"],
+                    max_tokens=max_tokens,
                 )
-            except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse tool call arguments: {e}")
 
-        usage_dict = None
-        if response.usage:
-            usage_dict = {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            }
+            try:
+                response = await self.client.chat.completions.create(**kwargs)
+            except Exception as e:
+                llm_logger.log_error(str(e), {"model": self.model})
+                raise
 
-        # Log full response
-        tool_info = f" [tool: {tool_call_result.name}]" if tool_call_result else ""
+            choice = response.choices[0]
+            content = choice.message.content or ""
+
+            # Extract reasoning/thinking tokens if present (OpenRouter)
+            # These are returned as extra attributes on the message object
+            reasoning_text = getattr(choice.message, "reasoning", None)
+            reasoning_details = getattr(choice.message, "reasoning_details", None)
+
+            # Extract tool call if present
+            tool_call_result = None
+            if choice.message.tool_calls and len(choice.message.tool_calls) > 0:
+                tc = choice.message.tool_calls[0]
+                try:
+                    arguments = json.loads(tc.function.arguments)
+                    tool_call_result = ToolCall(
+                        name=tc.function.name,
+                        arguments=arguments,
+                    )
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse tool call arguments: {e}")
+
+            usage_dict = None
+            if response.usage:
+                usage_dict = {
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens,
+                }
+
+            # If we got a tool call, log and return
+            if tool_call_result:
+                reasoning_info = f" [reasoning: {len(reasoning_text)} chars]" if reasoning_text else ""
+                llm_logger.log_response(
+                    content=content + f" [tool: {tool_call_result.name}]{reasoning_info}",
+                    model=response.model,
+                    usage=usage_dict,
+                    finish_reason=choice.finish_reason,
+                )
+                return LLMResponse(
+                    content=content,
+                    model=response.model,
+                    usage=usage_dict,
+                    finish_reason=choice.finish_reason,
+                    tool_call=tool_call_result,
+                    reasoning=reasoning_text,
+                    reasoning_details=reasoning_details,
+                )
+
+            # No tool call - log and retry
+            logger.warning(
+                f"Model did not call a tool (attempt {attempt + 1}/{max_tool_retries}). "
+                f"Response: {content[:200]}{'...' if len(content) > 200 else ''}"
+            )
+
+            # Add the assistant's response and a nudge to use tools
+            # Include reasoning_details if present to preserve thinking context
+            assistant_msg: dict[str, Any] = {"role": "assistant", "content": content}
+            if reasoning_details:
+                assistant_msg["reasoning_details"] = reasoning_details
+            full_messages.append(assistant_msg)
+            full_messages.append({
+                "role": "user",
+                "content": "You must use the execute_code tool to take an action. Please call the tool now."
+            })
+
+        # Exhausted retries - return last response without tool call
+        logger.error(f"Failed to get tool call after {max_tool_retries} attempts")
         llm_logger.log_response(
-            content=content + tool_info,
+            content=content + " [NO TOOL CALL]",
             model=response.model,
             usage=usage_dict,
             finish_reason=choice.finish_reason,
         )
-
         return LLMResponse(
             content=content,
             model=response.model,
             usage=usage_dict,
             finish_reason=choice.finish_reason,
-            tool_call=tool_call_result,
+            tool_call=None,
+            reasoning=reasoning_text,
+            reasoning_details=reasoning_details,
         )
 
 
@@ -450,4 +501,5 @@ def create_client_from_config(config) -> LLMClient:
         model=config.agent.model,
         base_url=config.agent.base_url,
         temperature=config.agent.temperature,
+        reasoning=config.agent.reasoning,
     )

@@ -8,7 +8,7 @@ from src.api.queries import (
     get_stats,
     get_position,
     get_visible_monsters,
-    get_adjacent_monsters,
+    get_adjacent_hostiles,
     get_inventory,
     get_current_level,
     find_stairs,

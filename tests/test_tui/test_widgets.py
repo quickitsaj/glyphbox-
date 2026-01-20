@@ -116,6 +116,7 @@ class TestWidgetEventHandling:
             max_hp=20,
             turn=50,
             dungeon_level=2,
+            xp_level=1,
             score=100,
             message="Test",
             hunger="not_hungry",

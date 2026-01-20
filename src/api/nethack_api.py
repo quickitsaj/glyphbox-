@@ -43,8 +43,6 @@ from .pathfinding import (
     find_nearest,
     find_nearest_monster,
     find_path,
-    find_stairs_down,
-    find_stairs_up,
     find_unexplored,
     is_doorway_glyph,
 )
@@ -52,7 +50,7 @@ from .queries import (
     find_doors,
     find_items_on_map,
     find_stairs,
-    get_adjacent_monsters,
+    get_adjacent_hostiles,
     get_current_level,
     get_food_in_inventory,
     get_hostile_monsters,
@@ -138,6 +136,8 @@ class NetHackAPI:
         self._last_prayer_turn = 0
         self._message_history = []
         self._dungeon_memory.clear()  # Reset exploration tracking for new game
+        # Record initial position and visible tiles for pathfinding
+        self._mark_current_position_stepped()
         logger.info("Episode started")
         return obs
 
@@ -183,6 +183,26 @@ class NetHackAPI:
                 # If tile is currently visible and walkable, remember it
                 if is_walkable_glyph(glyph):
                     level.mark_seen_walkable(x, y)
+
+    def sync_level_memory(self) -> None:
+        """
+        Sync level memory with current observation.
+
+        Call this at the start of each agent turn to ensure pathfinding has
+        accurate information. The map can change between turns due to:
+        - Monsters dying (corpses appear)
+        - Doors opening/closing
+        - Items being picked up or dropped
+        - Pet movement revealing new areas
+        - etc.
+
+        This ensures level memory always matches what the agent sees on screen.
+        """
+        if not self.observation:
+            return
+        dungeon_level = int(self.observation.blstats[12])  # BL_DEPTH
+        level = self._dungeon_memory.get_level(dungeon_level, create=True)
+        self._update_visible_walkable_tiles(level)
 
     def _has_unreachable_areas(self) -> bool:
         """
@@ -347,6 +367,11 @@ class NetHackAPI:
         return 0
 
     @property
+    def role(self) -> str:
+        """Get the player's role (class) name, e.g. 'Valkyrie', 'Barbarian'."""
+        return self._env.role
+
+    @property
     def position(self) -> Position:
         """Get player's current position."""
         if self.observation:
@@ -401,11 +426,11 @@ class NetHackAPI:
             return []
         return get_visible_monsters(self.observation)
 
-    def get_adjacent_monsters(self) -> list[Monster]:
-        """Get monsters in the 8 adjacent tiles."""
+    def get_adjacent_hostiles(self) -> list[Monster]:
+        """Get hostile monsters in the 8 adjacent tiles (for combat)."""
         if not self.observation:
             return []
-        return get_adjacent_monsters(self.observation)
+        return get_adjacent_hostiles(self.observation)
 
     def get_hostile_monsters(self) -> list[Monster]:
         """Get only hostile (non-pet) monsters."""
@@ -495,7 +520,7 @@ class NetHackAPI:
             self._mark_current_position_stepped()
         return result
 
-    def move_to(self, target) -> ActionResult:
+    def move_to(self, target, pass_through_doors: bool = False) -> ActionResult:
         """
         Move to a target position by pathfinding and following the path.
 
@@ -507,6 +532,7 @@ class NetHackAPI:
 
         Args:
             target: Position object or (x, y) tuple
+            pass_through_doors: If True, treat closed doors as passable (like NetHack travel)
 
         Returns:
             ActionResult with success/failure and messages from the journey.
@@ -516,7 +542,7 @@ class NetHackAPI:
         target = self._to_position(target)
 
         # Find path to target (always allow with hostiles - agent made conscious decision)
-        path_result = self._find_path(target, allow_with_hostiles=True)
+        path_result = self._find_path(target, allow_with_hostiles=True, pass_through_doors=pass_through_doors)
 
         # If target is unwalkable, try to path to an adjacent tile instead
         if not path_result.success and path_result.reason == PathStopReason.TARGET_UNWALKABLE:
@@ -525,6 +551,11 @@ class NetHackAPI:
             # Note: use 'is not None' because empty path with SUCCESS still needs to be used
             if adjacent_path is not None and adjacent_path.success:
                 path_result = adjacent_path
+            elif adjacent_path is None:
+                # No path to ANY adjacent tile - areas are disconnected
+                return ActionResult.failure(
+                    f"No path to {target} - area appears disconnected."
+                )
 
         if not path_result.success:
             return ActionResult.failure(f"No path: {path_result.message}")
@@ -599,7 +630,17 @@ class NetHackAPI:
         return result
 
     def pickup(self, item_letter: Optional[str] = None) -> ActionResult:
-        """Pick up items."""
+        """
+        Pick up items from the ground.
+
+        Args:
+            item_letter: If multiple items on ground, specify which to pick up (a, b, c...).
+                        If only one item, this can be omitted.
+                        If multiple items exist, pickup() without args will fail with a list.
+
+        Returns:
+            ActionResult - fails with item list if multiple items and no letter specified
+        """
         if not self._actions:
             return ActionResult.failure("Environment not initialized")
         result = self._actions.pickup(item_letter)
@@ -819,6 +860,7 @@ class NetHackAPI:
         avoid_traps: bool = True,
         allow_with_hostiles: bool = False,
         cardinal_only: Optional[bool] = None,
+        pass_through_doors: bool = False,
     ) -> PathResult:
         """
         Internal: Find path to a target position using A*.
@@ -833,7 +875,8 @@ class NetHackAPI:
         level_memory = self._dungeon_memory.get_level(dungeon_level, create=True)
         return find_path(
             self.observation, target, avoid_monsters, avoid_traps,
-            allow_with_hostiles, cardinal_only=cardinal_only, level_memory=level_memory
+            allow_with_hostiles, cardinal_only=cardinal_only, level_memory=level_memory,
+            pass_through_doors=pass_through_doors
         )
 
     def _find_path_to_adjacent(
@@ -943,7 +986,6 @@ class NetHackAPI:
         - HP drops below 30% (low_hp)
         - Found interesting feature - stairs, altar, etc. (feature)
         - Item found on ground (item)
-        - Engraving found (engraving)
         - max_steps reached (max_steps)
         - Hunger >= WEAK (hungry)
         - Blind, confused, or stunned (blocked)
@@ -1017,6 +1059,20 @@ class NetHackAPI:
         starting_stats = self.get_stats()
         started_hungry = starting_stats.is_hungry
 
+        # Capture tiles that were already stepped at start of autoexplore.
+        # We only stop for items/features on NEW tiles (not previously stepped).
+        # This prevents loops where agent ignores an item, walks away, then
+        # autoexplore routes back through and stops at the same item again.
+        initially_stepped: set[tuple[int, int]] = set()
+        if self._dungeon_memory and self.observation:
+            dungeon_lvl = int(self.observation.blstats[12])  # BL_DEPTH
+            level_mem = self._dungeon_memory.get_level(dungeon_lvl)
+            if level_mem:
+                for y in range(21):
+                    for x in range(79):
+                        if level_mem.is_stepped(x, y):
+                            initially_stepped.add((x, y))
+
         while steps_taken < max_steps:
             # Check if game ended
             if self.is_done:
@@ -1078,25 +1134,31 @@ class NetHackAPI:
                 )
             # Note: sessile monsters (molds, fungi) are ignored - they don't chase
 
-            # Check for items on ground
-            items_here = self.get_items_here()
-            if items_here and steps_taken > 0:  # Don't stop immediately if starting on item
-                return AutoexploreResult(
-                    stop_reason="item",
-                    steps_taken=steps_taken,
-                    turns_elapsed=self.turn - turns_start,
-                    position=self.position,
-                    message=f"Found item: {items_here[0].name} after {steps_taken} steps",
-                )
+            # Get current position for checks below
+            current_pos = self.position
+            pos_tuple = (current_pos.x, current_pos.y)
+            is_new_tile = pos_tuple not in initially_stepped
+
+            # Check for items on ground - only stop at NEW tiles to avoid loops
+            # where agent ignores item, walks away, then returns and stops again
+            if is_new_tile and steps_taken > 0:
+                items_here = self.get_items_here()
+                if items_here:
+                    return AutoexploreResult(
+                        stop_reason="item",
+                        steps_taken=steps_taken,
+                        turns_elapsed=self.turn - turns_start,
+                        position=self.position,
+                        message=f"Found item: {items_here[0].name} after {steps_taken} steps",
+                    )
 
             # Note: We no longer stop at dead ends - let autoexplore continue until
             # there are no more reachable unexplored areas. The agent can decide
             # when to search for secret doors based on the visible map.
 
-            # Check for unvisited interesting features
-            current_pos = self.position
+            # Check for unvisited interesting features - only on NEW tiles
             current_tile = self.get_tile(current_pos)
-            if current_tile and steps_taken > 0:
+            if is_new_tile and current_tile and steps_taken > 0:
                 if current_tile.is_stairs_up or current_tile.is_stairs_down:
                     return AutoexploreResult(
                         stop_reason="stairs",
@@ -1248,16 +1310,25 @@ class NetHackAPI:
             # Find path to target
             path_result = self._find_path(target)
             if not path_result or not path_result.path:
-                # Path blocked - try opening a door before giving up
+                # Path failed - this could be because:
+                # 1. Target was cached from previous iteration and map changed
+                # 2. Monster blocking path
+                # 3. Door closed
+                # Instead of blindly retrying, immediately invalidate the cached target
+                # so next iteration will find a fresh target with current observation.
+                logger.debug(f"autoexplore: path to {target} failed, invalidating cached target")
+                current_target = None  # Force find_unexplored on next iteration
                 failed_attempts += 1
-                target_attempts += 1  # Track failures for current target
+                target_attempts += 1
+
+                # Try opening a door as a recovery action
+                door_opened = self._try_open_nearest_closed_door()
+                if door_opened:
+                    steps_taken += 1
+                    failed_attempts = 0
+                    continue
+
                 if failed_attempts >= max_failed_attempts:
-                    # Last resort: try to open any closed door
-                    door_opened = self._try_open_nearest_closed_door()
-                    if door_opened:
-                        steps_taken += 1
-                        failed_attempts = 0
-                        continue
                     steps_msg = f" after {steps_taken} steps" if steps_taken > 0 else ""
                     return AutoexploreResult(
                         stop_reason="blocked",
@@ -1294,18 +1365,8 @@ class NetHackAPI:
                 if len(recent_positions) > max_recent:
                     recent_positions.pop(0)  # Remove oldest
 
-                # Check for engraving messages after move
-                messages = result.messages
-                for msg in messages:
-                    msg_lower = msg.lower()
-                    if "you read:" in msg_lower or "something is written" in msg_lower:
-                        return AutoexploreResult(
-                            stop_reason="engraving",
-                            steps_taken=steps_taken,
-                            turns_elapsed=self.turn - turns_start,
-                            position=self.position,
-                            message=f"Found engraving: {msg[:50]}",
-                        )
+                # Note: We no longer stop for engravings/graffiti - they're just flavor text
+                # and stopping causes loops when the agent walks back through the same tile.
             else:
                 # Movement failed - check if this was a diagonal move
                 # If so, try going around with cardinal moves (doorway restriction workaround)
@@ -1371,31 +1432,81 @@ class NetHackAPI:
             message=f"Explored {steps_taken} steps, reached max ({max_steps})",
         )
 
-    def find_stairs_up(self, allow_with_hostiles: bool = False) -> TargetResult:
-        """
-        Find stairs up position (<).
-
-        Returns TargetResult with position and reason.
-        """
-        if not self.observation:
-            return TargetResult(None, PathStopReason.NO_OBSERVATION, "No observation available")
-        return find_stairs_up(self.observation, allow_with_hostiles=allow_with_hostiles)
-
-    def find_stairs_down(self, allow_with_hostiles: bool = False) -> TargetResult:
-        """
-        Find stairs down position (>).
-
-        Returns TargetResult with position and reason.
-        """
-        if not self.observation:
-            return TargetResult(None, PathStopReason.NO_OBSERVATION, "No observation available")
-        return find_stairs_down(self.observation, allow_with_hostiles=allow_with_hostiles)
-
     def find_nearest_monster(self) -> Optional[Position]:
         """Find nearest hostile monster."""
         if not self.observation:
             return None
         return find_nearest_monster(self.observation)
+
+    def travel_to(self, char: str) -> ActionResult:
+        """
+        Travel to the nearest tile with the given character (NetHack-style travel).
+
+        This is the equivalent of NetHack's `_` travel command with a symbol shortcut.
+        For example, `travel_to('>')` is like pressing `_>.` in NetHack.
+
+        Common characters:
+        - '>' - stairs down
+        - '<' - stairs up
+        - '{' - fountain
+        - '_' - altar (use the string, not the method name)
+        - '#' - sink
+        - '$' - gold
+        - '%' - food
+        - ')' - weapon
+        - '[' - armor
+
+        Args:
+            char: Single character to search for on the map
+
+        Returns:
+            ActionResult with success/failure. If successful, player is now
+            at (or adjacent to, if unwalkable) the target tile.
+        """
+        if not self.observation:
+            return ActionResult.failure("No observation available")
+
+        if len(char) != 1:
+            return ActionResult.failure(f"Expected single character, got '{char}'")
+
+        # Scan the map for matching tiles
+        level = self.get_current_level()
+        player_pos = self.position
+        candidates: list[tuple[Position, int]] = []  # (position, distance)
+
+        for y in range(21):
+            for x in range(79):
+                pos = Position(x, y)
+                tile = level.get_tile(pos)
+                if tile and tile.char == char:
+                    # Use Chebyshev distance for initial sorting
+                    dist = player_pos.chebyshev_distance(pos)
+                    candidates.append((pos, dist))
+
+        if not candidates:
+            return ActionResult.failure(f"No '{char}' found on this level")
+
+        # Sort by distance to find nearest
+        candidates.sort(key=lambda x: x[1])
+
+        # Try candidates in order (nearest first) until we find one we can reach
+        last_failure_reason = ""
+        for target_pos, dist in candidates:
+            if target_pos == player_pos:
+                # Already there
+                return ActionResult(success=True, messages=[f"Already at '{char}'"], turn_elapsed=False)
+
+            # Use move_to with pass_through_doors=True (like NetHack's travel command)
+            logger.debug(f"travel_to: trying candidate '{char}' at {target_pos} (dist={dist})")
+            result = self.move_to(target_pos, pass_through_doors=True)
+            if result.success:
+                return result
+            # Log why this candidate failed
+            last_failure_reason = result.messages[0] if result.messages else "unknown"
+            logger.debug(f"travel_to: candidate {target_pos} failed: {last_failure_reason}")
+
+        # None of the candidates were reachable
+        return ActionResult.failure(f"Found '{char}' but cannot reach it: {last_failure_reason}")
 
     def find_nearest_item(self) -> TargetResult:
         """

@@ -66,6 +66,37 @@ NLE (NetHack Learning Environment)
 4. Code has access to `nh` (NetHackAPI) and `Direction` enum - all calls are synchronous
 5. Results (including game messages, failed API calls) returned to agent for next LLM context
 
+### LLM Context Structure
+
+The agent receives context in this structure:
+
+**System Prompt** (once per session):
+- Full NetHackAPI documentation (~4KB) in `SYSTEM_PROMPT_NO_SKILLS`
+
+**Message History** (per turn, managed by `_build_messages_with_compression`):
+- Old user messages → Compressed to just `Last Result:` section (game screen stripped)
+- Old assistant messages → Kept in full (contain code + reasoning)
+- Controlled by `agent.max_history_turns`: 0 = unlimited (compress old), N = sliding window
+
+**Current User Message** (full content each turn):
+```
+=== CURRENT GAME VIEW ===
+Your position: (x, y)
+{24x80 ASCII game screen with status bar}
+
+Last Result:
+success: {bool}
+game_messages:
+  - You hit the goblin!
+  - The goblin hits! (x3)
+failed_api_calls:
+  - move() FAILED: blocked by boulder (x5)
+
+What action do you want to take?
+```
+
+The game screen comes FIRST so the agent sees spatial context before text feedback. Position is explicitly stated to anchor the agent. Repeated messages are deduplicated with counts (e.g., `(x3)`).
+
 ### Sandbox Security
 
 Code validation in `src/sandbox/validation.py`:
@@ -80,11 +111,23 @@ Code validation in `src/sandbox/validation.py`:
 - `agent.provider`: "openrouter" or "anthropic"
 - `agent.model`: model identifier
 - `agent.skills_enabled`: false (core tools only) or true (adds write_skill/invoke_skill)
+- `agent.max_history_turns`: 0 = unlimited history (compress old), N = sliding window of N turns
 
 Environment variables:
 - `OPENROUTER_KEY` or `OPENROUTER_API_KEY`: Required for OpenRouter
 - `NETHACK_AGENT_MODEL`: Override model
 - `NETHACK_AGENT_LOG_LEVEL`: Override log level
+
+## Logs
+
+Run logs are stored in `data/logs/` with filenames like `run_2026-01-19_19-34-49.log`.
+
+Logs include:
+- LLM requests/responses (prompts sent, tool calls received)
+- Game state each turn (HP, position, dungeon level)
+- Agent decisions and reasoning
+- API call results (successes and failures)
+- Pathfinding debug info
 
 ## Key Patterns
 

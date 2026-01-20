@@ -184,6 +184,7 @@ class TUIAgentRunner:
                     max_hp=stats.max_hp,
                     turn=stats.turn,
                     dungeon_level=stats.dungeon_level,
+                    xp_level=stats.xp_level,
                     score=stats.score,
                     message=message,
                     hunger=stats.hunger.value if hasattr(stats.hunger, "value") else str(stats.hunger),
@@ -250,7 +251,7 @@ async def create_watched_agent(
     Returns:
         Tuple of (agent, api)
     """
-    from src.agent import NetHackAgent, AgentConfig
+    from src.agent import NetHackAgent
     from src.agent.llm_client import LLMClient
     from src.api import NetHackAPI
     from src.skills import SkillLibrary, SkillExecutor
@@ -290,20 +291,12 @@ async def create_watched_agent(
     # Create executor
     executor = SkillExecutor(api=api, library=library)
 
-    # Create agent
-    agent_config = AgentConfig(
-        max_turns=config.agent.max_turns,
-        max_consecutive_errors=5,
-        decision_timeout=60.0,
-        skill_timeout=config.sandbox.timeout_seconds,
-        max_recent_messages=config.agent.max_recent_messages,
-    )
-
+    # Create agent with unified config
     agent = NetHackAgent(
         llm_client=llm,
         skill_library=library,
         skill_executor=executor,
-        config=agent_config,
+        config=config.agent,
     )
 
     return agent, api

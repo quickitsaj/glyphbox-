@@ -192,7 +192,7 @@ class DecisionLogger:
         skill_name: Optional[str] = None,
         params: Optional[dict] = None,
         reasoning: Optional[str] = None,
-        raw_response: Optional[str] = None,
+        code: Optional[str] = None,
     ) -> None:
         """Log an agent decision."""
         parts = [f"DECISION: {decision_type}"]
@@ -204,6 +204,11 @@ class DecisionLogger:
 
         if reasoning:
             self.logger.info(f"  Reasoning: {reasoning}")
+
+        if code:
+            self.logger.info("  Code:")
+            for line in code.split('\n'):
+                self.logger.info(f"    {line}")
 
 
 class SkillLogger:

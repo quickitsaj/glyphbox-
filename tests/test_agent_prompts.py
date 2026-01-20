@@ -38,75 +38,31 @@ class TestPromptManager:
     def test_format_decision_prompt_minimal(self):
         """Test formatting decision prompt with minimal data (no skills)."""
         prompt = self.manager.format_decision_prompt(
-            game_state={},
             saved_skills=[],
-            recent_events=[],
             last_result=None,
         )
         assert isinstance(prompt, str)
-        assert "GAME STATE" in prompt
         # When skills disabled, no "Saved Skills" section
         assert "Saved Skills" not in prompt
 
     def test_format_decision_prompt_minimal_with_skills(self):
         """Test formatting decision prompt with skills enabled."""
         prompt = self.manager_with_skills.format_decision_prompt(
-            game_state={},
             saved_skills=[],
-            recent_events=[],
             last_result=None,
         )
         assert isinstance(prompt, str)
-        assert "GAME STATE" in prompt
         assert "Saved Skills" in prompt
-
-    def test_format_decision_prompt_with_game_state(self):
-        """Test formatting decision prompt with game state."""
-        game_state = {
-            "current_turn": 100,
-            "hp": 15,
-            "max_hp": 20,
-            "current_level": 3,
-            "hunger_state": "not hungry",
-            "position_x": 10,
-            "position_y": 15,
-        }
-        prompt = self.manager.format_decision_prompt(
-            game_state=game_state,
-            saved_skills=[],
-            recent_events=[],
-            last_result=None,
-        )
-        # Position and hunger are included (not visible on screen)
-        assert "Position: (10, 15)" in prompt
-        assert "not hungry" in prompt
 
     def test_format_decision_prompt_with_saved_skills(self):
         """Test formatting decision prompt with saved skills (skills enabled)."""
         saved_skills = ["explore_corridor", "fight_adjacent"]
         prompt = self.manager_with_skills.format_decision_prompt(
-            game_state={},
             saved_skills=saved_skills,
-            recent_events=[],
             last_result=None,
         )
         assert "explore_corridor" in prompt
         assert "fight_adjacent" in prompt
-
-    def test_format_decision_prompt_with_events(self):
-        """Test formatting decision prompt with recent events."""
-        events = [
-            {"turn": 95, "type": "combat", "desc": "Killed a jackal"},
-            {"turn": 98, "type": "item", "desc": "Found a scroll"},
-        ]
-        prompt = self.manager.format_decision_prompt(
-            game_state={},
-            saved_skills=[],
-            recent_events=events,
-            last_result=None,
-        )
-        assert "Killed a jackal" in prompt
-        assert "Found a scroll" in prompt
 
     def test_format_decision_prompt_with_last_result(self):
         """Test formatting decision prompt with last result."""
@@ -116,12 +72,26 @@ class TestPromptManager:
             "hint": "Moved east successfully",
         }
         prompt = self.manager.format_decision_prompt(
-            game_state={},
             saved_skills=[],
-            recent_events=[],
             last_result=last_result,
         )
         assert "Moved east successfully" in prompt or "success" in prompt.lower()
+
+    def test_format_decision_prompt_with_game_screen(self):
+        """Test formatting decision prompt with game screen."""
+        game_screen = """
+ ------
+ |....|
+ |..@.|
+ ------
+"""
+        prompt = self.manager.format_decision_prompt(
+            saved_skills=[],
+            last_result=None,
+            game_screen=game_screen,
+        )
+        assert "@" in prompt
+        assert "CURRENT GAME VIEW" in prompt
 
     def test_format_skill_creation_prompt(self):
         """Test formatting skill creation prompt."""
@@ -190,16 +160,13 @@ class TestPromptFormatting:
         self.manager = PromptManager()
         self.manager_with_skills = PromptManager(skills_enabled=True)
 
-    def test_decision_prompt_contains_action_instructions(self):
-        """Test that decision prompt explains available actions."""
+    def test_decision_prompt_contains_game_view(self):
+        """Test that decision prompt contains game view section."""
         prompt = self.manager.format_decision_prompt(
-            game_state={},
             saved_skills=[],
-            recent_events=[],
             last_result=None,
         )
-        # Should have some instruction or state info
-        assert "GAME STATE" in prompt or "Skills" in prompt
+        assert "CURRENT GAME VIEW" in prompt
 
     def test_skill_creation_prompt_contains_api_info(self):
         """Test that skill creation prompt mentions API."""
@@ -214,38 +181,11 @@ class TestPromptFormatting:
     def test_prompts_are_reasonable_length(self):
         """Test that prompts aren't excessively long."""
         decision_prompt = self.manager_with_skills.format_decision_prompt(
-            game_state={"hp": 10, "max_hp": 20},
             saved_skills=[f"skill_{i}" for i in range(10)],
-            recent_events=[
-                {"turn": i, "type": "test", "desc": f"Event {i}"}
-                for i in range(5)
-            ],
             last_result={"success": True, "hint": "All good"},
         )
         # Should be under 10k characters for reasonable token usage
         assert len(decision_prompt) < 10000
-
-    def test_game_state_formatting(self):
-        """Test game state is formatted readably."""
-        game_state = {
-            "current_turn": 500,
-            "hp": 30,
-            "max_hp": 50,
-            "current_level": 5,
-            "xp_level": 4,
-            "position_x": 25,
-            "position_y": 12,
-            "hunger_state": "hungry",
-        }
-        prompt = self.manager.format_decision_prompt(
-            game_state=game_state,
-            saved_skills=[],
-            recent_events=[],
-            last_result=None,
-        )
-        # Position and hunger should appear (not visible on screen status bar)
-        assert "Position: (25, 12)" in prompt
-        assert "hungry" in prompt
 
 
 class TestEdgeCases:
@@ -259,51 +199,18 @@ class TestEdgeCases:
     def test_empty_everything(self):
         """Test with all empty inputs."""
         prompt = self.manager.format_decision_prompt(
-            game_state={},
             saved_skills=[],
-            recent_events=[],
             last_result=None,
         )
         assert isinstance(prompt, str)
         assert len(prompt) > 0
 
-    def test_none_values_in_game_state(self):
-        """Test game state with None values."""
-        game_state = {
-            "current_turn": 100,
-            "hp": 15,
-            "max_hp": 20,
-        }
-        prompt = self.manager.format_decision_prompt(
-            game_state=game_state,
-            saved_skills=[],
-            recent_events=[],
-            last_result=None,
-        )
-        # Should not crash
-        assert isinstance(prompt, str)
-
     def test_special_characters_in_skills(self):
         """Test skills with special characters (skills enabled)."""
         saved_skills = ["skill_with_underscore", "skill-with-dash"]
         prompt = self.manager_with_skills.format_decision_prompt(
-            game_state={},
             saved_skills=saved_skills,
-            recent_events=[],
             last_result=None,
         )
         # Should not crash and should contain the content
         assert "skill_with_underscore" in prompt
-
-    def test_unicode_in_events(self):
-        """Test events with unicode characters."""
-        events = [
-            {"turn": 1, "type": "test", "desc": "Picked up a sword"},
-        ]
-        prompt = self.manager.format_decision_prompt(
-            game_state={},
-            saved_skills=[],
-            recent_events=events,
-            last_result=None,
-        )
-        assert isinstance(prompt, str)

@@ -95,6 +95,7 @@ class TestGameStateUpdated:
             max_hp=20,
             turn=100,
             dungeon_level=3,
+            xp_level=5,
             score=250,
             message="You see a goblin.",
             hunger="not_hungry",
@@ -104,6 +105,7 @@ class TestGameStateUpdated:
         assert event.max_hp == 20
         assert event.turn == 100
         assert event.dungeon_level == 3
+        assert event.xp_level == 5
         assert event.score == 250
         assert event.message == "You see a goblin."
         assert event.hunger == "not_hungry"
@@ -116,6 +118,7 @@ class TestGameStateUpdated:
             max_hp=20,
             turn=200,
             dungeon_level=5,
+            xp_level=3,
             score=100,
             message="You feel weak!",
             hunger="weak",

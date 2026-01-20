@@ -63,6 +63,7 @@ class GameStateUpdated(Message):
     max_hp: int
     turn: int
     dungeon_level: int
+    xp_level: int
     score: int
     message: str
     hunger: str
@@ -74,6 +75,7 @@ class GameStateUpdated(Message):
         max_hp: int,
         turn: int,
         dungeon_level: int,
+        xp_level: int,
         score: int,
         message: str,
         hunger: str,
@@ -84,6 +86,7 @@ class GameStateUpdated(Message):
         self.max_hp = max_hp
         self.turn = turn
         self.dungeon_level = dungeon_level
+        self.xp_level = xp_level
         self.score = score
         self.message = message
         self.hunger = hunger

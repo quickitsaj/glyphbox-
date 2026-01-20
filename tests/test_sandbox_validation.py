@@ -279,7 +279,7 @@ async def explore(nh, max_steps=100):
         if nh.is_done:
             return SkillResult.stopped("game_over", success=False)
 
-        monsters = nh.get_adjacent_monsters()
+        monsters = nh.get_adjacent_hostiles()
         if monsters:
             return SkillResult.stopped("monster_spotted", success=False, monster=monsters[0])
 

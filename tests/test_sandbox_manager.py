@@ -45,21 +45,12 @@ class TestSandboxConfig:
     def test_default_config(self):
         """Test default configuration values."""
         config = SandboxConfig()
-        assert config.memory_limit == "256m"
         assert config.timeout_seconds == 30.0
-        assert config.network_disabled is True
-        assert config.read_only is True
 
     def test_custom_config(self):
         """Test custom configuration."""
-        config = SandboxConfig(
-            memory_limit="512m",
-            timeout_seconds=60.0,
-            use_gvisor=True,
-        )
-        assert config.memory_limit == "512m"
+        config = SandboxConfig(timeout_seconds=60.0)
         assert config.timeout_seconds == 60.0
-        assert config.use_gvisor is True
 
 
 class TestSkillSandboxLocalExecution:
@@ -271,23 +262,9 @@ class TestSkillSandboxLifecycle:
         """Test creating sandbox instance."""
         sandbox = SkillSandbox()
         assert sandbox is not None
-        assert sandbox._initialized is False
 
     def test_sandbox_config(self):
         """Test sandbox with custom config."""
         config = SandboxConfig(timeout_seconds=60.0)
         sandbox = SkillSandbox(config)
         assert sandbox.config.timeout_seconds == 60.0
-
-    @pytest.mark.asyncio
-    async def test_context_manager(self):
-        """Test using sandbox as context manager."""
-        async with SkillSandbox() as sandbox:
-            assert sandbox is not None
-        # Should be closed after exiting
-
-    def test_close(self):
-        """Test closing sandbox."""
-        sandbox = SkillSandbox()
-        sandbox.close()
-        assert sandbox._initialized is False

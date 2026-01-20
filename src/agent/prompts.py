@@ -14,6 +14,21 @@ logger = logging.getLogger(__name__)
 DEFAULT_PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 
 
+def _deduplicate_with_counts(items: list[str]) -> list[tuple[str, int]]:
+    """
+    Deduplicate a list while preserving order and counting occurrences.
+
+    Returns list of (item, count) tuples in order of first appearance.
+    Empty strings are filtered out.
+    """
+    from collections import OrderedDict
+    counts: OrderedDict[str, int] = OrderedDict()
+    for item in items:
+        if item:  # Skip empty strings
+            counts[item] = counts.get(item, 0) + 1
+    return list(counts.items())
+
+
 class PromptManager:
     """
     Manages prompt templates for the agent.
@@ -106,27 +121,23 @@ class PromptManager:
 
     def format_decision_prompt(
         self,
-        game_state: dict,
         saved_skills: list[str],
-        recent_events: list[dict],
         last_result: Optional[dict] = None,
         game_screen: Optional[str] = None,
+        current_position: Optional[Any] = None,
     ) -> str:
         """
         Format a decision prompt with current game context.
 
         Args:
-            game_state: Current game state summary
             saved_skills: List of skill names the agent has written
-            recent_events: Recent game events
             last_result: Result of the last tool execution
             game_screen: Full game screen (ASCII art showing what human would see)
+            current_position: Current player Position (x, y)
 
         Returns:
             Formatted decision prompt
         """
-        # Format game state
-        state_text = self._format_game_state(game_state)
 
         # Format saved skills (only when skills enabled)
         skills_text = ""
@@ -135,9 +146,6 @@ class PromptManager:
                 skills_text = "\n".join(f"- {name}" for name in saved_skills)
             else:
                 skills_text = "None (use write_skill to create skills)"
-
-        # Format events
-        events_text = self._format_events(recent_events)
 
         # Format last result
         if last_result:
@@ -149,47 +157,38 @@ class PromptManager:
             if last_result.get("error"):
                 result_lines.append(f"error: {last_result['error']}")
 
-            # Show game messages prominently (these tell the LLM what happened)
+            # Show game messages (raw feedback from the game)
+            # Deduplicate repeated messages with counts
             messages = last_result.get("messages", [])
             if messages:
                 result_lines.append("game_messages:")
-                for msg in messages:
-                    if msg:  # Skip empty messages
+                deduped = _deduplicate_with_counts(messages)
+                for msg, count in deduped:
+                    if count > 1:
+                        result_lines.append(f"  - {msg} (x{count})")
+                    else:
                         result_lines.append(f"  - {msg}")
 
-                # Interpret common message patterns for agent guidance
-                for msg in messages:
-                    if not msg:
-                        continue
-                    msg_lower = msg.lower()
-                    if "you kill" in msg_lower or "you destroy" in msg_lower:
-                        result_lines.append("  >>> ENEMY KILLED - may have dropped corpse or items")
-                    elif "you see here" in msg_lower:
-                        result_lines.append("  HINT: Item AT YOUR FEET - use nh.pickup() or nh.eat() with NO arguments")
-                    elif "it's solid stone" in msg_lower or "it's a wall" in msg_lower:
-                        result_lines.append("  HINT: Movement blocked - try different direction")
-                    elif "locked" in msg_lower and "door" in msg_lower:
-                        result_lines.append("  HINT: Door locked - use kick() or find key")
-                    elif "there is nothing here to pick up" in msg_lower:
-                        result_lines.append("  HINT: No items at current position")
-                    elif "hidden rooms may exist" in msg_lower:
-                        result_lines.append("  HINT: Level may have secret doors hiding rooms/stairs")
-                    # Detect pickup messages like "e - a kobold corpse" (item now in inventory)
-                    elif len(msg) > 4 and msg[1:4] == " - " and msg[0].isalpha():
-                        result_lines.append(f"  >>> PICKED UP into slot '{msg[0]}' - item is now in INVENTORY, not on ground")
-
-            # Show hint if present (from look_around)
-            if last_result.get("hint"):
-                result_lines.append(last_result["hint"])
+            # Show autoexplore result if autoexplore was called
+            autoexplore = last_result.get("autoexplore_result")
+            if autoexplore:
+                stop_reason = autoexplore.get("stop_reason", "unknown")
+                steps = autoexplore.get("steps_taken", 0)
+                result_lines.append(f"autoexplore: stopped ({stop_reason}) after {steps} steps")
 
             # Show FAILED API calls prominently - critical feedback for the agent
+            # Deduplicate repeated failures with counts
             failed_calls = last_result.get("failed_api_calls", [])
             if failed_calls:
                 result_lines.append("FAILED API CALLS (actions that did not succeed):")
-                for call in failed_calls:
-                    method = call.get("method", "unknown")
-                    error = call.get("error", "unknown error")
-                    result_lines.append(f"  - {method}() FAILED: {error}")
+                # Convert to strings for deduplication
+                fail_strs = [f"{c.get('method', 'unknown')}() FAILED: {c.get('error', 'unknown error')}" for c in failed_calls]
+                deduped = _deduplicate_with_counts(fail_strs)
+                for fail_msg, count in deduped:
+                    if count > 1:
+                        result_lines.append(f"  - {fail_msg} (x{count})")
+                    else:
+                        result_lines.append(f"  - {fail_msg}")
 
             # Show return value if meaningful
             rv = last_result.get("return_value")
@@ -204,12 +203,16 @@ class PromptManager:
         else:
             result_text = "None"
 
+        # Format position
+        position_text = ""
+        if current_position:
+            position_text = f"Your position: ({current_position.x}, {current_position.y})"
+
         # Build kwargs - only include saved_skills when skills enabled
         kwargs = {
             "game_screen": game_screen or "Screen not available",
-            "game_state": state_text,
-            "recent_events": events_text,
             "last_result": result_text,
+            "position": position_text,
         }
         if self.skills_enabled:
             kwargs["saved_skills"] = skills_text
@@ -277,9 +280,6 @@ class PromptManager:
         """
         lines = []
 
-        # Position (coordinates not visible on screen, only @ symbol)
-        if "position_x" in state and "position_y" in state:
-            lines.append(f"Position: ({state['position_x']}, {state['position_y']})")
 
         # Hunger (only shows on screen when hungry/weak/fainting)
         if "hunger_state" in state:
@@ -291,19 +291,17 @@ class PromptManager:
         elif state.get("hp_trend") == "critical":
             lines.append("Status: CRITICAL HP")
 
-        # Hostile monsters with details (distances, directions)
+        # Hostile monsters (locations visible on map)
         if "hostile_monster_details" in state and state["hostile_monster_details"]:
             lines.append("Hostile Monsters:")
             for m in state["hostile_monster_details"]:
                 lines.append(f"  - {m}")
 
-        # Doors with state and distance
-        if "door_details" in state and state["door_details"]:
-            lines.append("Doors:")
-            for d in state["door_details"][:5]:  # Limit to 5 doors
-                lines.append(f"  - {d}")
+        # Doors summary
+        if "doors" in state:
+            lines.append(f"Doors: {state['doors']}")
 
-        # Stairs locations
+        # Stairs (locations visible on map as < or >)
         if "stairs_down" in state:
             lines.append(f"Stairs Down: {state['stairs_down']}")
         if "stairs_up" in state:
@@ -437,9 +435,9 @@ stats = nh.get_stats()
 Hunger: Use stats.is_hungry (True if HUNGRY+) or stats.is_weak (True if WEAK+)
 
 **Monsters:**
-nh.get_visible_monsters()    # List[Monster] - all visible
-nh.get_adjacent_monsters()   # List[Monster] - next to you
-nh.get_hostile_monsters()    # List[Monster] - hostile only
+nh.get_visible_monsters()    # List[Monster] - all visible (includes pets/peaceful)
+nh.get_adjacent_hostiles()   # List[Monster] - hostile monsters adjacent to you (for combat)
+nh.get_hostile_monsters()    # List[Monster] - all hostile monsters visible
 
 Monster has: .name, .position, .is_hostile, .is_peaceful, .is_tame
 
@@ -483,20 +481,22 @@ IMPORTANT: When you see "[ynq]" or "[yn]" in a message, the game is waiting for 
 ### Movement & Navigation
 
 nh.move_to(target)           # Move to position (pathfinds automatically). Returns ActionResult.
-nh.find_stairs_down()        # Returns TargetResult with position of stairs
-nh.find_stairs_up()          # Returns TargetResult
+nh.travel_to('>')            # Find nearest '>' and pathfind there (NetHack-style travel)
 nh.find_nearest_item()       # Returns TargetResult with nearest item position
 nh.find_nearest_monster()    # Position or None
 nh.find_doors()              # list[(Position, is_open)] - all doors on level
 
-Note: move_to() works even with hostile monsters visible - it will stop if a hostile appears during movement.
+**travel_to(char)** - NetHack-style travel command (like pressing `_>.` in NetHack):
+  nh.travel_to('>')          # Go to stairs down
+  nh.travel_to('<')          # Go to stairs up
+  nh.travel_to('{')          # Go to fountain
+  nh.travel_to('$')          # Go to gold
+  Returns ActionResult. USE THIS for navigating to map features!
 
-Example - moving to stairs:
-  target = nh.find_stairs_down()
-  if target.success:
-      result = nh.move_to(target.position)
-      if result.success:
-          nh.go_down()
+Example - going to stairs and descending:
+  result = nh.travel_to('>')
+  if result.success:
+      nh.go_down()
 
 Example - opening a door after finding it:
   doors = nh.find_doors()
@@ -507,7 +507,7 @@ Example - opening a door after finding it:
           if nh.position.distance_to(pos) == 1:
               nh.open_door(nh.position.direction_to(pos))
 
-**TargetResult** - returned by find_stairs/find_nearest_item:
+**TargetResult** - returned by find_nearest_item:
   result.position   # Position or None
   result.success    # bool - True if target found
   result.message    # Human-readable explanation
@@ -556,6 +556,7 @@ nh.estimate_difficulty(name) # int 0-10
 
 ### Properties
 
+nh.role                      # str - your class (e.g. "Valkyrie", "Barbarian")
 nh.is_done                   # bool - game over?
 nh.turn                      # int - current turn
 nh.position                  # Position - current location
@@ -580,16 +581,11 @@ nh.position                  # Position - current location
 5. TAKE ACTION - Always make game progress. Move, fight, explore."""
 
 DECISION_PROMPT = """=== CURRENT GAME VIEW ===
+{position}
 {game_screen}
-
-=== GAME STATE ===
-{game_state}
 
 Your Saved Skills:
 {saved_skills}
-
-Recent Events:
-{recent_events}
 
 Last Result:
 {last_result}
@@ -616,12 +612,12 @@ Create a new skill that handles this situation. The skill must:
 5. Have a clear stopping condition
 
 Available API methods on `nh`:
-- State: get_stats(), get_position(), get_message(), get_visible_monsters(), get_adjacent_monsters(), get_inventory(), turn, is_done
+- State: get_stats(), get_position(), get_message(), get_visible_monsters(), get_adjacent_hostiles(), get_inventory(), turn, is_done
 - Movement: move(direction), go_up(), go_down()
 - Combat: attack(direction)
 - Items: pickup(), eat(slot), quaff(slot), wield(slot), wear(slot)
 - Utility: wait(), search(), open_door(direction)
-- Navigation: move_to(target), autoexplore(), find_stairs_up(), find_stairs_down()
+- Navigation: move_to(target), travel_to(char), autoexplore()
 - Knowledge: is_dangerous_melee(name), is_corpse_safe(name)
 
 Respond with a JSON decision including the full skill code in the "code" field."""
@@ -723,9 +719,9 @@ stats = nh.get_stats()
 Hunger: Use stats.is_hungry (True if HUNGRY+) or stats.is_weak (True if WEAK+)
 
 **Monsters:**
-nh.get_visible_monsters()    # List[Monster] - all visible
-nh.get_adjacent_monsters()   # List[Monster] - next to you
-nh.get_hostile_monsters()    # List[Monster] - hostile only
+nh.get_visible_monsters()    # List[Monster] - all visible (includes pets/peaceful)
+nh.get_adjacent_hostiles()   # List[Monster] - hostile monsters adjacent to you (for combat)
+nh.get_hostile_monsters()    # List[Monster] - all hostile monsters visible
 
 Monster has: .name, .position, .is_hostile, .is_peaceful, .is_tame
 
@@ -769,20 +765,22 @@ IMPORTANT: When you see "[ynq]" or "[yn]" in a message, the game is waiting for 
 ### Movement & Navigation
 
 nh.move_to(target)           # Move to position (pathfinds automatically). Returns ActionResult.
-nh.find_stairs_down()        # Returns TargetResult with position of stairs
-nh.find_stairs_up()          # Returns TargetResult
+nh.travel_to('>')            # Find nearest '>' and pathfind there (NetHack-style travel)
 nh.find_nearest_item()       # Returns TargetResult with nearest item position
 nh.find_nearest_monster()    # Position or None
 nh.find_doors()              # list[(Position, is_open)] - all doors on level
 
-Note: move_to() works even with hostile monsters visible - it will stop if a hostile appears during movement.
+**travel_to(char)** - NetHack-style travel command (like pressing `_>.` in NetHack):
+  nh.travel_to('>')          # Go to stairs down
+  nh.travel_to('<')          # Go to stairs up
+  nh.travel_to('{')          # Go to fountain
+  nh.travel_to('$')          # Go to gold
+  Returns ActionResult. USE THIS for navigating to map features!
 
-Example - moving to stairs:
-  target = nh.find_stairs_down()
-  if target.success:
-      result = nh.move_to(target.position)
-      if result.success:
-          nh.go_down()
+Example - going to stairs and descending:
+  result = nh.travel_to('>')
+  if result.success:
+      nh.go_down()
 
 Example - opening a door after finding it:
   doors = nh.find_doors()
@@ -793,7 +791,7 @@ Example - opening a door after finding it:
           if nh.position.distance_to(pos) == 1:
               nh.open_door(nh.position.direction_to(pos))
 
-**TargetResult** - returned by find_stairs/find_nearest_item:
+**TargetResult** - returned by find_nearest_item:
   result.position   # Position or None
   result.success    # bool - True if target found
   result.message    # Human-readable explanation
@@ -842,6 +840,7 @@ nh.estimate_difficulty(name) # int 0-10
 
 ### Properties
 
+nh.role                      # str - your class (e.g. "Valkyrie", "Barbarian")
 nh.is_done                   # bool - game over?
 nh.turn                      # int - current turn
 nh.position                  # Position - current location
@@ -866,13 +865,8 @@ nh.position                  # Position - current location
 5. TAKE ACTION - Always make game progress. Move, fight, explore."""
 
 DECISION_PROMPT_NO_SKILLS = """=== CURRENT GAME VIEW ===
+{position}
 {game_screen}
-
-=== GAME STATE ===
-{game_state}
-
-Recent Events:
-{recent_events}
 
 Last Result:
 {last_result}

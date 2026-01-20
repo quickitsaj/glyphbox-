@@ -658,9 +658,10 @@ def parse_glyph(glyph: int, char: Optional[str] = None, description: Optional[st
 
     if nethack.glyph_is_object(glyph):
         obj_id = nethack.glyph_to_obj(glyph)
-        # TODO: Look up object name from NLE data
-        name = f"object {obj_id}"
-        if char == "$":
+        # Use screen_description if provided (authoritative), otherwise fallback to generic
+        if description:
+            name = description
+        elif char == "$":
             name = "gold"
         elif char == "%":
             name = "food"
@@ -686,6 +687,8 @@ def parse_glyph(glyph: int, char: Optional[str] = None, description: Optional[st
             name = "gem"
         elif char == "0" or obj_id == 1:  # Boulder (obj_id 1, char '0')
             name = "boulder"
+        else:
+            name = f"object {obj_id}"
         # Boulders block movement (obj_id 1 is boulder)
         walkable = obj_id != 1
         return GlyphInfo(

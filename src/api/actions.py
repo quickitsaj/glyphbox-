@@ -309,22 +309,79 @@ class ActionExecutor:
 
     # ==================== Items ====================
 
-    def pickup(self, item_letter: Optional[str] = None) -> ActionResult:
-        """
-        Pick up items.
-
-        Args:
-            item_letter: If specified, pick up specific item. Otherwise pick up all.
+    def _is_pickup_menu(self) -> tuple[bool, list[str]]:
+        """Check if the game is showing a 'Pick up what?' menu.
 
         Returns:
-            ActionResult
+            (is_menu, item_lines) - True if in pickup menu, plus list of item descriptions
+        """
+        obs = self.env.last_observation
+        if obs is None:
+            return False, []
+
+        screen = obs.get_screen()
+        if "Pick up what?" not in screen:
+            return False, []
+
+        # Extract item lines from the menu (format: "a - item name")
+        items = []
+        for line in screen.split("\n"):
+            line = line.strip()
+            # Match pattern like "a - an orcish helm" or "b - a hobgoblin corpse"
+            if len(line) >= 4 and line[1:4] == " - " and line[0].isalpha():
+                items.append(line)
+
+        return True, items
+
+    def pickup(self, item_letter: Optional[str] = None) -> ActionResult:
+        """
+        Pick up items from the ground.
+
+        Args:
+            item_letter: If specified, pick up that specific item from a pile.
+
+        Returns:
+            ActionResult - fails with item list if multiple items and no letter specified
         """
         if item_letter:
-            # Pick up specific item from pile
-            return self._execute_sequence([ord(","), ord(item_letter)])
-        else:
-            # Pick up all or single item
-            return self._execute_single(ord(","))
+            # Pick up specific item from pile: comma opens menu, letter selects, enter confirms
+            return self._execute_sequence([ord(","), ord(item_letter), ord("\r")])
+
+        # Send comma to initiate pickup
+        idx = self._get_action_idx(ord(","))
+        if idx is None:
+            return ActionResult.failure("Pickup action not available")
+
+        try:
+            obs, reward, terminated, truncated, info = self.env.step(idx)
+            message = obs.get_message() if obs else ""
+
+            # Check if we're now in a pickup menu (multiple items)
+            is_menu, items = self._is_pickup_menu()
+            if is_menu:
+                # Cancel the menu with escape so game isn't stuck
+                esc_idx = self._get_action_idx(27)  # ESC
+                if esc_idx is not None:
+                    self.env.step(esc_idx)
+
+                item_list = ", ".join(items[:5])  # Show first 5 items
+                return ActionResult.failure(
+                    f"Multiple items here: {item_list}. "
+                    f"Use pickup('a'), pickup('b'), etc. to pick specific items."
+                )
+
+            # Single item or no items - pickup completed normally
+            post_messages = self._dismiss_more_prompts()
+            all_messages = ([message] if message else []) + post_messages
+
+            return ActionResult(
+                success=True,
+                messages=all_messages,
+                turn_elapsed=True,
+                state_changed=True,
+            )
+        except Exception as e:
+            return ActionResult.failure(str(e))
 
     def drop(self, item_letter: str) -> ActionResult:
         """

@@ -29,20 +29,7 @@ decision_logger = DecisionLogger()
 skill_logger = SkillLogger()
 game_state_logger = GameStateLogger()
 
-
-@dataclass
-class AgentConfig:
-    """Configuration for the agent."""
-
-    max_turns: int = 100000
-    max_consecutive_errors: int = 5
-    decision_timeout: float = 60.0
-    skill_timeout: float = 30.0
-    hp_flee_threshold: float = 0.3
-    auto_save_skills: bool = True
-    log_decisions: bool = True
-    skills_enabled: bool = False  # Enable write_skill/invoke_skill tools
-    max_recent_messages: int = 10  # Number of recent messages to keep in full
+# AgentConfig is imported from src.config
 
 
 @dataclass
@@ -150,7 +137,6 @@ class NetHackAgent:
 
         # Conversation history for multi-turn LLM context
         self._conversation: list[dict] = []
-        self._max_conversation_turns = 10
 
     async def run_episode(self, api: Any) -> AgentResult:
         """
@@ -304,6 +290,10 @@ class NetHackAgent:
             return
 
         try:
+            # Sync level memory with current observation FIRST
+            # This ensures pathfinding has accurate info before any decisions
+            self._api.sync_level_memory()
+
             stats = self._api.get_stats()
             position = self._api.get_position()
             monsters = self._api.get_visible_monsters()
@@ -357,87 +347,28 @@ class NetHackAgent:
 
     async def _get_decision(self) -> AgentDecision:
         """Get a decision from the LLM using tool calling."""
-        # Build context
-        game_state = self.memory.get_summary() if self.memory else {}
-
-        # Add real-time info: hostile monsters with positions
-        if self._api:
-            position = self._api.get_position()
-            hostile_monsters = self._api.get_hostile_monsters()
-            if hostile_monsters:
-                monster_details = []
-                for m in hostile_monsters:
-                    dist = position.distance_to(m.position)
-                    direction = position.direction_to(m.position)
-                    dir_name = direction.name if direction else "?"
-                    adjacent = " [ADJACENT]" if dist == 1 else ""
-                    monster_details.append(
-                        f"{m.name} at ({m.position.x}, {m.position.y}) [{dist} tiles {dir_name}]{adjacent}"
-                    )
-                game_state["hostile_monster_details"] = monster_details
-
-            # Add doors
-            doors = self._api.find_doors()
-            if doors:
-                door_details = []
-                for pos, is_open in doors:
-                    dist = position.distance_to(pos)
-                    direction = position.direction_to(pos)
-                    dir_name = direction.name if direction else "?"
-                    state = "open" if is_open else "closed"
-                    door_details.append(
-                        f"({pos.x}, {pos.y}) [{state}] [{dist} tiles {dir_name}]"
-                    )
-                game_state["door_details"] = door_details
-
-            # Add stairs if visible
-            stairs_down = self._api.find_stairs_down()
-            if stairs_down.success:
-                pos = stairs_down.position
-                dist = position.distance_to(pos)
-                direction = position.direction_to(pos)
-                dir_name = direction.name if direction else "?"
-                game_state["stairs_down"] = f"({pos.x}, {pos.y}) [{dist} tiles {dir_name}]"
-
-            stairs_up = self._api.find_stairs_up()
-            if stairs_up.success:
-                pos = stairs_up.position
-                dist = position.distance_to(pos)
-                direction = position.direction_to(pos)
-                dir_name = direction.name if direction else "?"
-                game_state["stairs_up"] = f"({pos.x}, {pos.y}) [{dist} tiles {dir_name}]"
-
         # Get saved skills (agent-written skills only)
         saved_skills = [
             s.name for s in self.library.list_skills()
             if s.metadata.author == "agent"
         ]
 
-        # Get recent events
-        events = []
-        if self.memory:
-            for e in self.memory.get_events(limit=10):
-                events.append({
-                    "turn": e.turn,
-                    "type": e.event_type,
-                    "desc": e.description,
-                })
-
         # Get last result
         last_result = self.state.last_skill_result
 
         # Get the full game screen (what a human would see)
         game_screen = ""
+        current_position = None
         if self._api:
             game_screen = self._api.get_screen()
+            current_position = self._api.position
 
         # Format prompt with game screen
         prompt = self.prompts.format_decision_prompt(
-            game_state=game_state,
             saved_skills=saved_skills,
-            recent_events=events,
             last_result=last_result,
             game_screen=game_screen,
+            current_position=current_position,
         )
 
         # Get LLM response with tool calling
@@ -460,9 +391,16 @@ class NetHackAgent:
                 "tool": response.tool_call.name,
                 "arguments": response.tool_call.arguments
             })
-            self._conversation.append({"role": "assistant", "content": tool_content})
+            assistant_msg: dict[str, Any] = {"role": "assistant", "content": tool_content}
+            # Preserve reasoning_details for re-feeding to subsequent requests
+            if response.reasoning_details:
+                assistant_msg["reasoning_details"] = response.reasoning_details
+            self._conversation.append(assistant_msg)
         else:
-            self._conversation.append({"role": "assistant", "content": response.content})
+            assistant_msg = {"role": "assistant", "content": response.content}
+            if response.reasoning_details:
+                assistant_msg["reasoning_details"] = response.reasoning_details
+            self._conversation.append(assistant_msg)
 
         # Log if configured
         if self.config.log_decisions:
@@ -481,49 +419,61 @@ class NetHackAgent:
         return decision
 
     def _build_messages_with_compression(self, current_prompt: str) -> list[dict]:
-        """Build message list, keeping recent messages full and compressing older ones."""
-        # Get conversation slice we'll use
-        conv_slice = self._conversation[-self._max_conversation_turns * 2:]
-        total = len(conv_slice)
-        max_recent = self.config.max_recent_messages * 2  # *2 for user+assistant pairs
+        """
+        Build message list for LLM context.
 
+        - Current user message: full content (map + state + last_result)
+        - Old user messages: compressed to just last_result (map stripped)
+        - Assistant messages: kept in full (contain code + reasoning)
+
+        If max_history_turns > 0, applies a sliding window.
+        If max_history_turns == 0, keeps all history (just compresses old user messages).
+        """
+        # Apply sliding window if configured
+        if self.config.max_history_turns > 0:
+            max_messages = self.config.max_history_turns * 2  # user + assistant per turn
+            conv_slice = self._conversation[-max_messages:]
+        else:
+            conv_slice = self._conversation
+
+        # Compress old user messages, keep assistant messages in full
         messages = []
-        for i, msg in enumerate(conv_slice):
-            is_recent = (total - i) <= max_recent
-            if is_recent:
-                messages.append(msg)
-            else:
-                compressed = self._compress_message(msg)
+        for msg in conv_slice:
+            role = msg.get("role", "")
+            if role == "user":
+                # Compress user messages (extract last_result only)
+                compressed = self._compress_user_message(msg)
                 if compressed:
                     messages.append(compressed)
+            else:
+                # Keep assistant messages in full (they have code + reasoning)
+                messages.append(msg)
 
-        # Add current prompt
+        # Add current prompt with full content (map + state + last_result)
         messages.append({"role": "user", "content": current_prompt})
         return messages
 
-    def _compress_message(self, msg: dict) -> dict | None:
-        """Compress a message for older context."""
-        role = msg.get("role", "")
+    def _compress_user_message(self, msg: dict) -> dict | None:
+        """
+        Compress a user message to just the last_result section.
+
+        Strips: game screen, game state, recent events
+        Keeps: last_result (critical feedback from previous action)
+        """
         content = msg.get("content", "")
 
-        if role == "user":
-            # User prompts contain screen + game state, just note it existed
-            return None  # Skip entirely - the assistant response has the context
+        # Extract Last Result section
+        last_result_marker = "Last Result:"
+        if last_result_marker in content:
+            idx = content.index(last_result_marker)
+            last_result_section = content[idx:].strip()
+            # Limit size but keep the important feedback
+            if len(last_result_section) > 500:
+                last_result_section = last_result_section[:500] + "..."
+            return {"role": "user", "content": f"[Previous turn]\n{last_result_section}"}
 
-        if role == "assistant":
-            # Try to parse as JSON tool call
-            try:
-                data = json.loads(content)
-                if "tool" in data and "arguments" in data:
-                    tool = data["tool"]
-                    reasoning = data["arguments"].get("reasoning", "")[:60]
-                    return {"role": "assistant", "content": f"[{tool}: {reasoning}]"}
-            except (json.JSONDecodeError, TypeError):
-                pass
-            # Non-JSON assistant message, truncate
-            return {"role": "assistant", "content": content[:100] + "..." if len(content) > 100 else content}
-
-        return msg
+        # No last_result found, skip this message entirely
+        return None
 
     def _create_decision_from_tool_call(self, tool_call, raw_response: str) -> AgentDecision:
         """Create AgentDecision from a tool call."""
@@ -552,6 +502,7 @@ class NetHackAgent:
             skill_name=decision.skill_name,
             params=decision.params,
             reasoning=decision.reasoning,
+            code=decision.code,
         )
 
         if decision.action == ActionType.EXECUTE_CODE:
@@ -580,10 +531,12 @@ class NetHackAgent:
             game_messages = []
             return_value = None
             failed_calls = []
+            autoexplore_result = None
             if result.result:
                 game_messages = result.result.get("game_messages", [])
                 return_value = result.result.get("return_value")
                 failed_calls = result.result.get("failed_api_calls", [])
+                autoexplore_result = result.result.get("autoexplore_result")
 
             self.state.last_skill_result = {
                 "tool": "execute_code",
@@ -598,9 +551,9 @@ class NetHackAgent:
             if result.stdout:
                 self.state.last_skill_result["output"] = result.stdout
 
-            # Record in memory
-            if self.memory:
-                self.memory.record_event("execute_code", f"Ran: {code[:100]}")
+            # Include autoexplore result if autoexplore was called
+            if autoexplore_result:
+                self.state.last_skill_result["autoexplore_result"] = autoexplore_result
 
             if result.success:
                 logger.info(f"Executed code successfully")

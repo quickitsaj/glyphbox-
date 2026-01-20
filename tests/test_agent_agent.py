@@ -478,10 +478,11 @@ class TestAgentConversation:
 
             self.agent.start_episode(mock_api)
 
-            # Add conversation history
+            # Add conversation history with realistic content
+            # User messages must have "Last Result:" to be compressed (not dropped)
             self.agent._conversation = [
-                {"role": "user", "content": "prev1"},
-                {"role": "assistant", "content": "prev2"},
+                {"role": "user", "content": "=== GAME VIEW ===\n...\nLast Result:\nsuccess: True"},
+                {"role": "assistant", "content": '{"tool": "execute_code", "arguments": {"code": "nh.move(Direction.N)"}}'},
             ]
 
             llm_response = MagicMock()
@@ -498,5 +499,8 @@ class TestAgentConversation:
             self.mock_llm.complete_with_tools.assert_called_once()
             call_args = self.mock_llm.complete_with_tools.call_args
             messages = call_args.kwargs.get("messages") or call_args[1].get("messages")
-            # Messages should include history plus new prompt
-            assert len(messages) >= 3  # prev1, prev2, new prompt
+            # Messages: compressed user (with last_result), assistant, new prompt
+            assert len(messages) >= 3
+            # Verify user message was compressed (should have "[Previous turn]" prefix)
+            assert "[Previous turn]" in messages[0]["content"]
+            assert "Last Result:" in messages[0]["content"]

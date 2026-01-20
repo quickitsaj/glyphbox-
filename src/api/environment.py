@@ -179,6 +179,7 @@ class NLEWrapper:
         self._done: bool = True
         self._episode_step: int = 0
         self._total_reward: float = 0.0
+        self._character: str = "val-hum-fem-law"  # Default character
 
         logger.info(f"NLEWrapper initialized with env={env_name}")
 
@@ -310,6 +311,29 @@ class NLEWrapper:
         if hasattr(self._env, "get_action_meanings"):
             return self._env.get_action_meanings()
         return [f"action_{i}" for i in range(self.action_space.n)]
+
+    @property
+    def role(self) -> str:
+        """Get the player's role (class) name."""
+        # Map character codes to full role names
+        role_map = {
+            "arc": "Archeologist",
+            "bar": "Barbarian",
+            "cav": "Caveman",
+            "hea": "Healer",
+            "kni": "Knight",
+            "mon": "Monk",
+            "pri": "Priest",
+            "ran": "Ranger",
+            "rog": "Rogue",
+            "sam": "Samurai",
+            "tou": "Tourist",
+            "val": "Valkyrie",
+            "wiz": "Wizard",
+        }
+        # Character string format: "role-race-gender-alignment" e.g. "val-hum-fem-law"
+        role_code = self._character.split("-")[0].lower()
+        return role_map.get(role_code, "Unknown")
 
     def __enter__(self) -> "NLEWrapper":
         """Context manager entry."""

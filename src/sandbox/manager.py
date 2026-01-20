@@ -37,6 +37,7 @@ class APIFailureTracker:
     def __init__(self, api):
         self._api = api
         self._failed_calls: list[dict] = []
+        self._autoexplore_result: Optional[dict] = None
 
     def _translate_error(self, error_msg: str, method: str) -> str:
         """Translate technical errors to actionable guidance for the agent."""
@@ -72,18 +73,33 @@ class APIFailureTracker:
         def wrapper(*args, **kwargs):
             result = attr(*args, **kwargs)
 
+            # Special handling for autoexplore - always capture the result
+            if name == "autoexplore" and hasattr(result, 'stop_reason'):
+                self._autoexplore_result = {
+                    "stop_reason": result.stop_reason,
+                    "steps_taken": getattr(result, 'steps_taken', 0),
+                    "message": getattr(result, 'message', ''),
+                }
+
             # Track failed ActionResults
             if hasattr(result, 'success'):
-                # This looks like an ActionResult
+                # This looks like an ActionResult or similar
                 if not result.success:
-                    # Capture error message from either 'error' or 'messages' field
+                    # Capture error message from various possible fields
                     error_msg = getattr(result, 'error', None)
                     messages = getattr(result, 'messages', [])
+                    message = getattr(result, 'message', None)  # AutoexploreResult uses singular
+                    stop_reason = getattr(result, 'stop_reason', None)
+
                     # Build a clear failure description
                     if error_msg:
                         failure_detail = error_msg
                     elif messages:
                         failure_detail = "; ".join(messages)
+                    elif message:
+                        failure_detail = message
+                    elif stop_reason:
+                        failure_detail = f"stopped: {stop_reason}"
                     else:
                         failure_detail = "unknown error"
 
@@ -104,9 +120,14 @@ class APIFailureTracker:
         """Get list of failed API calls."""
         return self._failed_calls
 
-    def clear_failures(self):
-        """Clear the failure list."""
+    def get_autoexplore_result(self) -> Optional[dict]:
+        """Get the autoexplore result if autoexplore was called."""
+        return self._autoexplore_result
+
+    def clear(self):
+        """Clear tracked state."""
         self._failed_calls.clear()
+        self._autoexplore_result = None
 
 
 # Default timeout for skill execution
@@ -543,8 +564,9 @@ class SkillSandbox:
                 else:
                     game_messages = new_messages
 
-            # Get any failed API calls
+            # Get any failed API calls and autoexplore result
             failed_calls = tracked_api.get_failed_calls()
+            autoexplore_result = tracked_api.get_autoexplore_result()
 
             result_dict = {}
             if result is not None:
@@ -556,6 +578,9 @@ class SkillSandbox:
             if failed_calls:
                 # Include failed calls prominently so agent sees what went wrong
                 result_dict["failed_api_calls"] = failed_calls
+            if autoexplore_result:
+                # Always show autoexplore outcome
+                result_dict["autoexplore_result"] = autoexplore_result
 
             return ExecutionResult(
                 success=True,

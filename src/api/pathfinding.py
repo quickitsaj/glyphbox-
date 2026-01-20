@@ -223,6 +223,7 @@ def find_path(
     player_can_fly: Optional[bool] = None,
     cardinal_only: Optional[bool] = None,
     level_memory: Optional["LevelMemory"] = None,
+    pass_through_doors: bool = False,
 ) -> PathResult:
     """
     Find a path from current position to target using A*.
@@ -239,6 +240,7 @@ def find_path(
         player_can_fly: If None, auto-detect from observation. If False, avoid water/lava.
         cardinal_only: If None, auto-detect grid bug form. If True, only cardinal moves.
         level_memory: Optional level memory for remembering doorway positions.
+        pass_through_doors: If True, treat closed doors as walkable (for travel command).
 
     Returns:
         PathResult with path (list of directions) and reason for success/failure
@@ -266,7 +268,7 @@ def find_path(
         cardinal_only = is_grid_bug_form(obs)
 
     # Build walkability and doorway grids from observation
-    walkable, doorways = _build_walkability_grid(obs, avoid_monsters, avoid_traps, player_can_fly, level_memory)
+    walkable, doorways = _build_walkability_grid(obs, avoid_monsters, avoid_traps, player_can_fly, level_memory, pass_through_doors)
 
     # Check if target is walkable
     if not walkable[target.y][target.x]:
@@ -279,7 +281,9 @@ def find_path(
                 PathStopReason.TARGET_UNWALKABLE,
                 f"Target {target} is a closed door. Move to an adjacent tile and use open_door() first."
             )
-        logger.debug(f"find_path: target {target} is unwalkable (glyph={target_glyph})")
+        # Log both glyph and char to detect if they differ (which would indicate memory/visibility mismatch)
+        target_char = chr(obs.chars[target.y, target.x])
+        logger.debug(f"find_path: target {target} is unwalkable (glyph={target_glyph}, char='{target_char}')")
         return PathResult([], PathStopReason.TARGET_UNWALKABLE, f"Target {target} is not walkable (wall, monster, etc.)")
 
     # A* search (doorways grid prevents diagonal movement through doors)
@@ -587,17 +591,31 @@ def find_unexplored(
             weight = _autotravel_weighting(pos.x, pos.y, dist, tile)
             candidates.append((weight, dist, pos))
 
-    # Pick best candidate by weight
+    # Pick best candidate by weight, verifying path exists
     if candidates:
         candidates.sort(key=lambda c: (c[0], c[1]))  # Sort by weight, then distance
-        best_weight, best_dist, best_pos = candidates[0]
-        # Debug: verify target is walkable and count reachable tiles
-        target_walkable = walkable_grid[best_pos.y][best_pos.x]
-        total_walkable = sum(1 for y in range(21) for x in range(79) if walkable_grid[y][x])
-        reachable_count = sum(1 for _ in _bfs_reachable(start, walkable_grid, doorway_grid, cardinal_only, max_distance))
-        logger.debug(f"find_unexplored: from {start}, selected target {best_pos} (weight={best_weight}, dist={best_dist}) from {len(candidates)} candidates")
-        logger.debug(f"find_unexplored: target_walkable={target_walkable}, total_walkable={total_walkable}, reachable={reachable_count}")
-        return TargetResult(best_pos, PathStopReason.SUCCESS)
+
+        # Verify candidates are actually reachable via A* (not just BFS)
+        # This ensures find_unexplored and find_path agree on reachability
+        for weight, dist, pos in candidates:
+            # Quick check: use find_path to verify we can actually get there
+            path_result = find_path(
+                obs, pos,
+                avoid_monsters=True, avoid_traps=True,
+                allow_with_hostiles=allow_with_hostiles,
+                level_memory=stepped_memory,
+                pass_through_doors=False
+            )
+            if path_result.success:
+                # Debug: verify target is walkable and count reachable tiles
+                target_walkable = walkable_grid[pos.y][pos.x]
+                total_walkable = sum(1 for y in range(21) for x in range(79) if walkable_grid[y][x])
+                reachable_count = sum(1 for _ in _bfs_reachable(start, walkable_grid, doorway_grid, cardinal_only, max_distance))
+                logger.debug(f"find_unexplored: from {start}, selected target {pos} (weight={weight}, dist={dist}) from {len(candidates)} candidates")
+                logger.debug(f"find_unexplored: target_walkable={target_walkable}, total_walkable={total_walkable}, reachable={reachable_count}")
+                return TargetResult(pos, PathStopReason.SUCCESS)
+            else:
+                logger.debug(f"find_unexplored: candidate {pos} not reachable via A* ({path_result.reason.value}), trying next")
 
     # If no candidates but start position is at frontier, return it
     if start_is_frontier:
@@ -711,6 +729,7 @@ def _build_walkability_grid(
     avoid_traps: bool = True,
     player_can_fly: bool = False,
     level_memory: Optional["LevelMemory"] = None,
+    pass_through_doors: bool = False,
 ) -> tuple[list[list[bool]], list[list[bool]]]:
     """
     Build 2D grids for pathfinding.
@@ -721,6 +740,7 @@ def _build_walkability_grid(
         avoid_traps: (Currently unused, traps are walkable)
         player_can_fly: If False, water/lava tiles are unwalkable
         level_memory: Optional level memory to track/recall doorway positions
+        pass_through_doors: If True, treat closed doors as walkable (for travel command)
 
     Returns:
         Tuple of (walkable_grid, doorway_grid)
@@ -736,6 +756,12 @@ def _build_walkability_grid(
         for x in range(79):
             glyph = int(obs.glyphs[y, x])
             walkable = is_walkable_glyph(glyph)
+
+            # Treat closed doors as walkable when pass_through_doors is True
+            # This enables NetHack-style travel through doors
+            if not walkable and pass_through_doors and is_closed_door_glyph(glyph):
+                walkable = True
+                logger.debug(f"walkability: ({x}, {y}) marked walkable (closed door, pass_through_doors=True)")
 
             # If tile shows as "stone" (out of line of sight, cmap 0),
             # check level memory for tiles we've seen or walked on.

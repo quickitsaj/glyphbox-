@@ -3,6 +3,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -11,17 +12,55 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+class ReasoningEffort(Enum):
+    """OpenRouter reasoning/thinking effort levels.
+
+    Controls how much "thinking" the model does before responding.
+    Maps to OpenRouter's reasoning.effort parameter.
+    """
+    NONE = "none"        # Disabled - no thinking tokens
+    MINIMAL = "minimal"  # ~10% of max_tokens for thinking
+    LOW = "low"          # ~20% of max_tokens for thinking
+    MEDIUM = "medium"    # ~50% of max_tokens for thinking
+    HIGH = "high"        # ~80% of max_tokens for thinking (recommended)
+    XHIGH = "xhigh"      # ~95% of max_tokens for thinking
+
+
 @dataclass
 class AgentConfig:
-    """LLM agent configuration."""
+    """Agent configuration (LLM + runtime settings)."""
 
+    # LLM settings
     provider: str = "openrouter"
     model: str = "anthropic/claude-opus-4.5"
     base_url: str = "https://openrouter.ai/api/v1"
     temperature: float = 0.2
+    # Reasoning/thinking effort level (for models that support extended thinking)
+    # Options: "none", "minimal", "low", "medium", "high", "xhigh"
+    reasoning: str = "none"
+
+    # Runtime settings
     max_turns: int = 100000
+    max_consecutive_errors: int = 5
+    decision_timeout: float = 60.0
+    skill_timeout: float = 30.0
+    hp_flee_threshold: float = 0.3
+    auto_save_skills: bool = True
+    log_decisions: bool = True
     skills_enabled: bool = False  # Enable write_skill/invoke_skill tools
-    max_recent_messages: int = 10  # Number of recent messages to keep in full
+
+    # Message history settings
+    # 0 = unlimited (keep all, compress old), N = sliding window of N turns
+    max_history_turns: int = 0
+
+    def get_reasoning_effort(self) -> Optional[ReasoningEffort]:
+        """Get reasoning effort as enum, or None if disabled."""
+        try:
+            effort = ReasoningEffort(self.reasoning.lower())
+            return None if effort == ReasoningEffort.NONE else effort
+        except ValueError:
+            logger.warning(f"Invalid reasoning value '{self.reasoning}', defaulting to none")
+            return None
 
 
 @dataclass

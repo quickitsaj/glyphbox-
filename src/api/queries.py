@@ -245,20 +245,21 @@ def get_visible_monsters(obs: Observation) -> list[Monster]:
     return monsters
 
 
-def get_adjacent_monsters(obs: Observation) -> list[Monster]:
+def get_adjacent_hostiles(obs: Observation) -> list[Monster]:
     """
-    Get monsters in the 8 adjacent tiles.
+    Get hostile monsters in the 8 adjacent tiles (for combat).
 
     Args:
         obs: NLE observation
 
     Returns:
-        List of Monster objects adjacent to player
+        List of hostile Monster objects adjacent to player
     """
     all_monsters = get_visible_monsters(obs)
     player_pos = get_position(obs)
 
-    return [m for m in all_monsters if player_pos.chebyshev_distance(m.position) == 1]
+    return [m for m in all_monsters
+            if player_pos.chebyshev_distance(m.position) == 1 and m.is_hostile]
 
 
 def get_hostile_monsters(obs: Observation) -> list[Monster]:
