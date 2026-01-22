@@ -25,18 +25,39 @@ from .validation import validate_skill, validate_adhoc_code
 logger = logging.getLogger(__name__)
 
 
-class APIFailureTracker:
-    """
-    Wrapper that tracks failed API calls for better feedback to the agent.
+# Methods that are game actions (consume turns, change game state)
+# These are tracked for feedback. Query methods are not tracked.
+ACTION_METHODS = {
+    # Movement
+    "move", "move_toward", "move_to", "go_up", "go_down",
+    # Combat
+    "attack", "kick", "fire", "throw",
+    # Items
+    "pickup", "drop", "eat", "quaff", "read", "zap", "wear", "wield", "take_off", "apply",
+    # Doors
+    "open_door", "close_door",
+    # Utility
+    "wait", "search", "rest", "pray", "look",
+    # Special
+    "cast_spell", "engrave",
+    # Raw input
+    "send_keys", "send_action", "escape", "confirm", "deny", "space",
+    # Navigation (these do multiple actions internally)
+    "travel_to", "autoexplore",
+}
 
-    When API methods return ActionResult with success=False, this wrapper
-    captures those failures so they can be reported even if the code doesn't
-    check or print the return value.
+
+class APICallTracker:
+    """
+    Wrapper that tracks ALL API action calls for feedback to the agent.
+
+    Tracks both successful and failed actions so the agent always knows
+    what happened, even when actions succeed silently.
     """
 
     def __init__(self, api):
         self._api = api
-        self._failed_calls: list[dict] = []
+        self._calls: list[dict] = []
         self._autoexplore_result: Optional[dict] = None
 
     def _translate_error(self, error_msg: str, method: str) -> str:
@@ -62,8 +83,44 @@ class APIFailureTracker:
                 return translation
         return error_msg
 
+    def _format_args(self, name: str, args: tuple, kwargs: dict) -> str:
+        """Format method arguments for display."""
+        # Special formatting for common methods
+        if name == "move" and args:
+            direction = args[0]
+            return direction.name if hasattr(direction, 'name') else str(direction)
+        elif name in ("attack", "kick", "open_door", "close_door") and args:
+            direction = args[0]
+            return direction.name if hasattr(direction, 'name') else str(direction)
+        elif name in ("eat", "quaff", "read", "wear", "wield", "drop", "take_off", "apply") and args:
+            return f"'{args[0]}'"
+        elif name == "zap" and len(args) >= 2:
+            item, direction = args[0], args[1]
+            dir_name = direction.name if hasattr(direction, 'name') else str(direction)
+            return f"'{item}', {dir_name}"
+        elif name == "throw" and len(args) >= 2:
+            item, direction = args[0], args[1]
+            dir_name = direction.name if hasattr(direction, 'name') else str(direction)
+            return f"'{item}', {dir_name}"
+        elif name == "move_to" and args:
+            target = args[0]
+            if hasattr(target, 'x') and hasattr(target, 'y'):
+                return f"({target.x}, {target.y})"
+            return str(target)
+        elif name == "travel_to" and args:
+            return f"'{args[0]}'"
+        elif name == "send_keys" and args:
+            keys = args[0]
+            if len(keys) <= 5:
+                return repr(keys)
+            return repr(keys[:5] + "...")
+        elif name == "autoexplore":
+            max_steps = kwargs.get('max_steps', 500)
+            return f"max_steps={max_steps}"
+        return ""
+
     def __getattr__(self, name):
-        """Proxy attribute access to wrapped API, tracking failed calls."""
+        """Proxy attribute access to wrapped API, tracking action calls."""
         attr = getattr(self._api, name)
 
         # Only wrap callable methods
@@ -73,7 +130,11 @@ class APIFailureTracker:
         def wrapper(*args, **kwargs):
             result = attr(*args, **kwargs)
 
-            # Special handling for autoexplore - always capture the result
+            # Only track action methods, not queries
+            if name not in ACTION_METHODS:
+                return result
+
+            # Special handling for autoexplore - capture detailed result
             if name == "autoexplore" and hasattr(result, 'stop_reason'):
                 self._autoexplore_result = {
                     "stop_reason": result.stop_reason,
@@ -81,17 +142,23 @@ class APIFailureTracker:
                     "message": getattr(result, 'message', ''),
                 }
 
-            # Track failed ActionResults
+            # Build call info
+            call_info = {
+                "method": name,
+                "args": self._format_args(name, args, kwargs),
+            }
+
+            # Determine success and add details
             if hasattr(result, 'success'):
-                # This looks like an ActionResult or similar
+                call_info["success"] = result.success
+
                 if not result.success:
                     # Capture error message from various possible fields
                     error_msg = getattr(result, 'error', None)
                     messages = getattr(result, 'messages', [])
-                    message = getattr(result, 'message', None)  # AutoexploreResult uses singular
+                    message = getattr(result, 'message', None)
                     stop_reason = getattr(result, 'stop_reason', None)
 
-                    # Build a clear failure description
                     if error_msg:
                         failure_detail = error_msg
                     elif messages:
@@ -101,24 +168,26 @@ class APIFailureTracker:
                     elif stop_reason:
                         failure_detail = f"stopped: {stop_reason}"
                     else:
-                        failure_detail = "unknown error"
+                        failure_detail = "failed"
 
-                    # Translate technical errors to actionable guidance
-                    failure_detail = self._translate_error(failure_detail, name)
+                    # Translate technical errors
+                    call_info["error"] = self._translate_error(failure_detail, name)
+            else:
+                # No success attribute - assume success
+                call_info["success"] = True
 
-                    self._failed_calls.append({
-                        "method": name,
-                        "success": False,
-                        "error": failure_detail,
-                    })
-
+            self._calls.append(call_info)
             return result
 
         return wrapper
 
+    def get_calls(self) -> list[dict]:
+        """Get list of all tracked API calls."""
+        return self._calls
+
     def get_failed_calls(self) -> list[dict]:
-        """Get list of failed API calls."""
-        return self._failed_calls
+        """Get list of failed API calls only (for backward compatibility)."""
+        return [c for c in self._calls if not c.get("success", True)]
 
     def get_autoexplore_result(self) -> Optional[dict]:
         """Get the autoexplore result if autoexplore was called."""
@@ -126,7 +195,7 @@ class APIFailureTracker:
 
     def clear(self):
         """Clear tracked state."""
-        self._failed_calls.clear()
+        self._calls.clear()
         self._autoexplore_result = None
 
 
@@ -432,7 +501,7 @@ class SkillSandbox:
         captured_output = io.StringIO()
 
         # Wrap API to track failed calls
-        tracked_api = APIFailureTracker(api)
+        tracked_api = APICallTracker(api)
 
         # Capture TOTAL message history length BEFORE execution
         # We access _message_history directly to avoid the cap from get_messages()
@@ -564,8 +633,44 @@ class SkillSandbox:
                 else:
                     game_messages = new_messages
 
-            # Get any failed API calls and autoexplore result
-            failed_calls = tracked_api.get_failed_calls()
+                # Filter out transient prompt messages that are no longer relevant
+                # These appear during multi-key sequences (zap, read, quaff, etc.)
+                # but confuse the LLM if shown after the action completes
+                transient_prompts = [
+                    "What do you want to zap?",
+                    "What do you want to read?",
+                    "What do you want to drink?",
+                    "What do you want to quaff?",
+                    "What do you want to eat?",
+                    "What do you want to wear?",
+                    "What do you want to wield?",
+                    "What do you want to take off?",
+                    "What do you want to drop?",
+                    "What do you want to throw?",
+                    "What do you want to apply?",
+                    "What do you want to invoke?",
+                    "What do you want to dip?",
+                    "What do you want to rub?",
+                    "What do you want to write with?",
+                    "In what direction?",
+                ]
+                game_messages = [
+                    m for m in game_messages
+                    if not any(m.strip().startswith(prompt) for prompt in transient_prompts)
+                ]
+
+            # Also capture current message after execution completes
+            # This handles messages that existed BEFORE code execution (e.g., "Be careful!
+            # New moon tonight.") or messages that persist after actions but weren't
+            # captured during individual action execution due to NLE timing.
+            if hasattr(api, 'get_message'):
+                current_msg = api.get_message()
+                if current_msg and current_msg not in game_messages:
+                    # Prepend so it appears first (it was the existing message)
+                    game_messages.insert(0, current_msg)
+
+            # Get all API calls and autoexplore result
+            api_calls = tracked_api.get_calls()
             autoexplore_result = tracked_api.get_autoexplore_result()
 
             result_dict = {}
@@ -575,9 +680,9 @@ class SkillSandbox:
                 result_dict["stdout"] = stdout
             if game_messages:
                 result_dict["game_messages"] = game_messages
-            if failed_calls:
-                # Include failed calls prominently so agent sees what went wrong
-                result_dict["failed_api_calls"] = failed_calls
+            if api_calls:
+                # Include ALL api calls so agent gets feedback on what happened
+                result_dict["api_calls"] = api_calls
             if autoexplore_result:
                 # Always show autoexplore outcome
                 result_dict["autoexplore_result"] = autoexplore_result

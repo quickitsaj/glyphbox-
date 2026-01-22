@@ -52,6 +52,9 @@ class AgentConfig:
     # Message history settings
     # 0 = unlimited (keep all, compress old), N = sliding window of N turns
     max_history_turns: int = 0
+    # How many recent turns keep their full map (0 = only current turn has map)
+    # Higher values give more spatial context but use more tokens
+    maps_in_history: int = 1
 
     def get_reasoning_effort(self) -> Optional[ReasoningEffort]:
         """Get reasoning effort as enum, or None if disabled."""
@@ -96,15 +99,6 @@ class SkillsConfig:
 
 
 @dataclass
-class MemoryConfig:
-    """Memory system configuration."""
-
-    database_path: str = "./data/memory.db"
-    max_short_term_items: int = 100
-    enable_dungeon_memory: bool = True
-
-
-@dataclass
 class LoggingConfig:
     """Logging configuration."""
 
@@ -123,7 +117,6 @@ class Config:
     environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
-    memory: MemoryConfig = field(default_factory=MemoryConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
@@ -164,8 +157,6 @@ def load_config(config_path: Optional[str] = None) -> Config:
                 config.sandbox = SandboxConfig(**data["sandbox"])
             if "skills" in data:
                 config.skills = SkillsConfig(**data["skills"])
-            if "memory" in data:
-                config.memory = MemoryConfig(**data["memory"])
             if "logging" in data:
                 config.logging = LoggingConfig(**data["logging"])
 

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 from .environment import Observation
-from .glyphs import is_walkable_glyph, is_dangerous_terrain_glyph, is_boulder_glyph, is_closed_door_glyph
+from .glyphs import is_walkable_glyph, is_dangerous_terrain_glyph, is_flight_required_glyph, is_boulder_glyph, is_closed_door_glyph
 from .models import Direction, DungeonLevel, Position, Tile
 from .queries import (
     get_current_level,
@@ -576,7 +576,7 @@ def find_unexplored(
     excluded = excluded_positions or set()
     for dist, pos in _bfs_reachable(
         start, walkable_grid, doorway_grid, cardinal_only, max_distance,
-        explored_only=True, level=level
+        explored_only=True, level=level, level_memory=stepped_memory
     ):
         # Skip start position - we check it separately
         if pos == start:
@@ -610,7 +610,7 @@ def find_unexplored(
                 # Debug: verify target is walkable and count reachable tiles
                 target_walkable = walkable_grid[pos.y][pos.x]
                 total_walkable = sum(1 for y in range(21) for x in range(79) if walkable_grid[y][x])
-                reachable_count = sum(1 for _ in _bfs_reachable(start, walkable_grid, doorway_grid, cardinal_only, max_distance))
+                reachable_count = sum(1 for _ in _bfs_reachable(start, walkable_grid, doorway_grid, cardinal_only, max_distance, level_memory=stepped_memory))
                 logger.debug(f"find_unexplored: from {start}, selected target {pos} (weight={weight}, dist={dist}) from {len(candidates)} candidates")
                 logger.debug(f"find_unexplored: target_walkable={target_walkable}, total_walkable={total_walkable}, reachable={reachable_count}")
                 return TargetResult(pos, PathStopReason.SUCCESS)
@@ -723,6 +723,44 @@ def is_doorway_glyph(glyph: int) -> bool:
     return cmap_idx in (15, 16)
 
 
+def _is_doorway_by_context(obs: Observation, x: int, y: int) -> bool:
+    """
+    Check if a position is likely a doorway based on adjacent wall patterns.
+
+    This handles the case when the player is standing ON a doorway - the player
+    glyph overwrites the door glyph, so we can't detect it directly. Instead,
+    we check if there are walls on opposite sides (N-S or E-W corridor pattern).
+
+    A doorway is a single-tile opening in a wall:
+    - E-W doorway: walls to north and south (player moving E or W through it)
+    - N-S doorway: walls to east and west (player moving N or S through it)
+
+    Args:
+        obs: Current observation
+        x, y: Position to check
+
+    Returns:
+        True if the position appears to be a doorway based on adjacent walls
+    """
+    def is_wall_char(cx: int, cy: int) -> bool:
+        """Check if a tile appears to be a wall based on its character."""
+        if not (0 <= cx < 79 and 0 <= cy < 21):
+            return False
+        char = chr(obs.chars[cy, cx])
+        # Wall chars: '-' (horizontal wall), '|' (vertical wall)
+        return char in ('-', '|')
+
+    # E-W doorway: walls to north and south (horizontal corridor through wall)
+    if is_wall_char(x, y - 1) and is_wall_char(x, y + 1):
+        return True
+
+    # N-S doorway: walls to east and west (vertical corridor through wall)
+    if is_wall_char(x - 1, y) and is_wall_char(x + 1, y):
+        return True
+
+    return False
+
+
 def _build_walkability_grid(
     obs: Observation,
     avoid_monsters: bool = True,
@@ -757,6 +795,12 @@ def _build_walkability_grid(
             glyph = int(obs.glyphs[y, x])
             walkable = is_walkable_glyph(glyph)
 
+            # Boulders are NEVER walkable - explicit check as belt-and-suspenders
+            # (is_walkable_glyph should already return False, but this ensures it)
+            if is_boulder_glyph(glyph):
+                walkable = False
+                logger.debug(f"walkability: ({x}, {y}) marked unwalkable (boulder, glyph={glyph})")
+
             # Treat closed doors as walkable when pass_through_doors is True
             # This enables NetHack-style travel through doors
             if not walkable and pass_through_doors and is_closed_door_glyph(glyph):
@@ -790,9 +834,9 @@ def _build_walkability_grid(
                 if is_hostile_glyph(glyph):
                     walkable = False
 
-            # Avoid water/lava when grounded (not flying/levitating)
+            # Avoid terrain that requires flight (water/lava/air/cloud)
             if walkable and not player_can_fly:
-                if is_dangerous_terrain_glyph(glyph, can_fly=False):
+                if is_flight_required_glyph(glyph):
                     walkable = False
 
             # Check for traps (we can still walk on them, but maybe avoid)
@@ -808,6 +852,18 @@ def _build_walkability_grid(
             # Also check level memory for remembered doorways (player glyph overwrites door glyph)
             if not is_doorway and level_memory and level_memory.is_doorway(x, y):
                 is_doorway = True
+
+            # Final fallback: if still not detected as doorway, check if player is standing here
+            # The player glyph overwrites the door glyph, so we infer from adjacent walls
+            if not is_doorway:
+                player_pos = get_position(obs)
+                if x == player_pos.x and y == player_pos.y:
+                    if _is_doorway_by_context(obs, x, y):
+                        is_doorway = True
+                        logger.debug(f"doorway: ({x}, {y}) detected by context (player standing on doorway)")
+                        # Record in level memory for future reference
+                        if level_memory:
+                            level_memory.mark_doorway(x, y)
 
             walkable_row.append(walkable)
             doorway_row.append(is_doorway)
@@ -836,6 +892,7 @@ def _bfs_reachable(
     max_distance: int = 100,
     explored_only: bool = False,
     level: Optional[DungeonLevel] = None,
+    level_memory: Optional["LevelMemory"] = None,
 ):
     """
     Generator that yields reachable positions via BFS.
@@ -849,8 +906,9 @@ def _bfs_reachable(
         doorways: 2D grid of doorway tiles (blocks diagonal movement)
         cardinal_only: If True, only allow cardinal (N/S/E/W) movement (grid bug form)
         max_distance: Maximum BFS distance
-        explored_only: If True, only traverse through explored tiles (requires level)
-        level: DungeonLevel for checking explored status (required if explored_only=True)
+        explored_only: If True, only traverse through explored tiles (requires level or level_memory)
+        level: DungeonLevel for checking explored status (from current observation)
+        level_memory: LevelMemory for checking previously explored tiles (for out-of-sight areas)
 
     Yields:
         Tuple of (distance, position) for each reachable position in BFS order
@@ -879,10 +937,28 @@ def _bfs_reachable(
             if not _can_move_to_neighbor(pos, neighbor, doorways, cardinal_only):
                 continue
 
-            # If explored_only, skip unexplored tiles
-            if explored_only and level:
-                neighbor_tile = level.get_tile(neighbor)
-                if not neighbor_tile or not neighbor_tile.is_explored:
+            # If explored_only, skip tiles that haven't been explored
+            # A tile is "explored enough" if:
+            # 1. It's currently visible (is_explored from observation), OR
+            # 2. We've stepped on it before (level_memory.is_stepped), OR
+            # 3. We've seen it as walkable before (level_memory.is_seen_walkable)
+            if explored_only:
+                is_known = False
+
+                # Check current visibility
+                if level:
+                    neighbor_tile = level.get_tile(neighbor)
+                    if neighbor_tile and neighbor_tile.is_explored:
+                        is_known = True
+
+                # Check level memory for out-of-sight tiles we've visited
+                if not is_known and level_memory:
+                    if level_memory.is_stepped(neighbor.x, neighbor.y):
+                        is_known = True
+                    elif level_memory.is_seen_walkable(neighbor.x, neighbor.y):
+                        is_known = True
+
+                if not is_known:
                     continue
 
             visited.add(neighbor)

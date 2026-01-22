@@ -347,8 +347,8 @@ class TestIsBoulderGlyph:
     def test_boulder_glyph(self):
         """Test detection of boulder glyph."""
         from nle import nethack
-        # Boulder is object ID 1
-        boulder_glyph = nethack.GLYPH_OBJ_OFF + 1
+        # Boulder is object ID 447 (verified via nethack.objdescr.from_idx(447).oc_name)
+        boulder_glyph = nethack.GLYPH_OBJ_OFF + 447
         assert is_boulder_glyph(boulder_glyph) is True
 
     def test_other_object_not_boulder(self):

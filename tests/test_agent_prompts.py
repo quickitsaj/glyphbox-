@@ -68,14 +68,14 @@ class TestPromptManager:
         """Test formatting decision prompt with last result."""
         last_result = {
             "tool": "execute_code",
-            "success": True,
-            "hint": "Moved east successfully",
+            "messages": ["You move east.", "The door opens."],
         }
         prompt = self.manager.format_decision_prompt(
             saved_skills=[],
             last_result=last_result,
         )
-        assert "Moved east successfully" in prompt or "success" in prompt.lower()
+        assert "You move east" in prompt
+        assert "The door opens" in prompt
 
     def test_format_decision_prompt_with_game_screen(self):
         """Test formatting decision prompt with game screen."""

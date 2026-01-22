@@ -74,6 +74,17 @@ class ActionExecutor:
         screen = obs.get_screen()
         return "--More--" in screen
 
+    def _is_yn_prompt(self) -> bool:
+        """Check if the game is showing a yes/no confirmation prompt."""
+        obs = self.env.last_observation
+        if obs is None:
+            return False
+        message = obs.get_message()
+        # NetHack prompts typically end with [yn], [ynq], [ynaq], etc.
+        # Examples: "Eat it? [ynq]", "Really attack? [yn]"
+        import re
+        return bool(re.search(r'\[y[naq]*\]', message))
+
     def _dismiss_more_prompts(self, max_prompts: int = 10) -> list[str]:
         """
         Dismiss any --More-- prompts by sending space.
@@ -622,11 +633,13 @@ class ActionExecutor:
         Send raw keystrokes.
 
         Args:
-            keys: String of keys to send
+            keys: String of keys to send (newlines are converted to carriage returns)
 
         Returns:
             ActionResult
         """
+        # Convert \n to \r (Enter key) since NLE doesn't recognize \n
+        keys = keys.replace('\n', '\r')
         chars = [ord(c) for c in keys]
         return self._execute_sequence(chars)
 
@@ -657,11 +670,37 @@ class ActionExecutor:
         return self._execute_single(27)  # ESC
 
     def confirm(self) -> ActionResult:
-        """Send 'y' for yes confirmation."""
+        """
+        Send 'y' for yes confirmation.
+
+        IMPORTANT: Only sends 'y' if there's an active [yn] prompt.
+        This prevents accidental movement since 'y' is also the NW direction key.
+        Returns success=False if no prompt is active.
+        """
+        if not self._is_yn_prompt():
+            return ActionResult(
+                success=False,
+                messages=["No confirmation prompt active"],
+                turn_elapsed=False,
+                state_changed=False,
+            )
         return self._execute_single(ord("y"))
 
     def deny(self) -> ActionResult:
-        """Send 'n' for no confirmation."""
+        """
+        Send 'n' for no confirmation.
+
+        IMPORTANT: Only sends 'n' if there's an active [yn] prompt.
+        This prevents accidental movement since 'n' is also the SE direction key.
+        Returns success=False if no prompt is active.
+        """
+        if not self._is_yn_prompt():
+            return ActionResult(
+                success=False,
+                messages=["No confirmation prompt active"],
+                turn_elapsed=False,
+                state_changed=False,
+            )
         return self._execute_single(ord("n"))
 
     def space(self) -> ActionResult:

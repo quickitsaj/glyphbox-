@@ -70,20 +70,23 @@ class TestGlyphParsing:
 
     def test_parse_cmap_door(self):
         """Test parsing door terrain."""
-        # Closed door is cmap ID 15, open door is 16, broken door is 17
+        # Per NLE symdef:
+        # cmap 12 = doorway (walkable)
+        # cmap 13, 14 = open door (walkable)
+        # cmap 15, 16 = closed door (NOT walkable)
+        doorway_glyph = nethack.GLYPH_CMAP_OFF + 12
+        open_glyph = nethack.GLYPH_CMAP_OFF + 13
         closed_glyph = nethack.GLYPH_CMAP_OFF + 15
-        open_glyph = nethack.GLYPH_CMAP_OFF + 16
-        broken_glyph = nethack.GLYPH_CMAP_OFF + 17
 
-        closed_info = parse_glyph(closed_glyph, "+")
+        doorway_info = parse_glyph(doorway_glyph, ".")
         open_info = parse_glyph(open_glyph, "-")
-        broken_info = parse_glyph(broken_glyph, "-")
+        closed_info = parse_glyph(closed_glyph, "+")
 
+        # Doorways and open doors ARE walkable
+        assert doorway_info.is_walkable is True
+        assert open_info.is_walkable is True
         # Closed doors are NOT walkable (must be opened first)
         assert closed_info.is_walkable is False
-        # Open and broken doors ARE walkable
-        assert open_info.is_walkable is True
-        assert broken_info.is_walkable is True
 
 
 class TestGlyphPredicates:

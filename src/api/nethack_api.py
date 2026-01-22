@@ -438,6 +438,57 @@ class NetHackAPI:
             return []
         return get_hostile_monsters(self.observation)
 
+    def get_adjacent_tiles(self) -> dict[str, str]:
+        """
+        Get descriptions of tiles in the 8 adjacent directions.
+
+        Returns a dict mapping direction names (N, NE, E, SE, S, SW, W, NW)
+        to brief tile descriptions using the existing parse_glyph() logic.
+        """
+        if not self.observation:
+            return {}
+
+        from .glyphs import parse_glyph
+
+        pos = self.position
+        obs = self.observation
+        result = {}
+
+        # Direction offsets: (dx, dy)
+        directions = {
+            "N": (0, -1),
+            "NE": (1, -1),
+            "E": (1, 0),
+            "SE": (1, 1),
+            "S": (0, 1),
+            "SW": (-1, 1),
+            "W": (-1, 0),
+            "NW": (-1, -1),
+        }
+
+        for dir_name, (dx, dy) in directions.items():
+            x, y = pos.x + dx, pos.y + dy
+
+            # Bounds check
+            if not (0 <= x < 79 and 0 <= y < 21):
+                result[dir_name] = "out of bounds"
+                continue
+
+            glyph = int(obs.glyphs[y, x])
+            char = chr(obs.chars[y, x])
+
+            # Get screen description (authoritative for monster/item names)
+            description = ""
+            if obs.screen_descriptions is not None:
+                desc_bytes = bytes(obs.screen_descriptions[y, x])
+                description = desc_bytes.decode("latin-1", errors="replace").rstrip("\x00")
+
+            # Use parse_glyph - it already has all the logic
+            info = parse_glyph(glyph, char, description)
+            result[dir_name] = info.name
+
+        return result
+
     def get_items_at(self, pos: Position) -> list[Item]:
         """Get items at a specific position."""
         if not self.observation:

@@ -125,6 +125,12 @@ class DecisionParser:
 
     def _extract_json(self, response: str) -> Optional[str]:
         """Extract JSON from response (handles code blocks)."""
+        response = response.strip()
+
+        # If the response IS a JSON object, return it directly
+        if response.startswith("{") and response.endswith("}"):
+            return response
+
         # First try to find JSON in code blocks
         matches = self.JSON_BLOCK_PATTERN.findall(response)
         for match in matches:
@@ -132,22 +138,52 @@ class DecisionParser:
             if match.startswith("{"):
                 return match
 
-        # Try to find bare JSON object
-        matches = self.BARE_JSON_PATTERN.findall(response)
-        if matches:
-            # Return the largest match (most likely the full decision)
-            return max(matches, key=len)
+        # Try to find bare JSON object using brace matching
+        # This handles nested braces better than regex
+        start_idx = response.find("{")
+        if start_idx != -1:
+            depth = 0
+            in_string = False
+            escape_next = False
+            for i, char in enumerate(response[start_idx:], start_idx):
+                if escape_next:
+                    escape_next = False
+                    continue
+                if char == "\\":
+                    escape_next = True
+                    continue
+                if char == '"' and not escape_next:
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return response[start_idx : i + 1]
 
         return None
 
     def _parse_json_decision(self, data: dict, raw_response: str) -> AgentDecision:
         """Parse a JSON decision dictionary."""
-        # Get action type
-        action_str = data.get("action", "").lower()
+        # Get action type - support both "action" and "tool" keys
+        action_str = data.get("action", "") or data.get("tool", "")
+        if not action_str:
+            logger.debug(f"No action/tool key found in data: {list(data.keys())}")
+        action_str = action_str.lower()
         try:
             action = ActionType(action_str)
         except ValueError:
             action = ActionType.UNKNOWN
+
+        # Handle nested "arguments" format (OpenAI tool calling style)
+        # {"tool": "execute_code", "arguments": {"code": "...", "reasoning": "..."}}
+        args = data.get("arguments", {})
+        if isinstance(args, dict):
+            # Merge arguments into data for field extraction
+            data = {**data, **args}
 
         # Extract fields
         skill_name = data.get("skill_name") or data.get("name")

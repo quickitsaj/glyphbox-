@@ -4,6 +4,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static
 from textual.app import ComposeResult
 from rich.text import Text
+from rich.syntax import Syntax
 
 from ..events import DecisionMade
 
@@ -35,6 +36,17 @@ class ReasoningPanel(VerticalScroll):
     #reasoning-content {
         width: 100%;
     }
+
+    #code-label {
+        text-style: bold;
+        color: $warning;
+        margin-top: 1;
+    }
+
+    #code-content {
+        width: 100%;
+        margin-top: 0;
+    }
     """
 
     def __init__(self, **kwargs) -> None:
@@ -44,6 +56,8 @@ class ReasoningPanel(VerticalScroll):
         """Compose the panel layout."""
         yield Static("Reasoning", id="reasoning-label")
         yield Static("Waiting for first decision...", id="reasoning-content")
+        yield Static("", id="code-label")
+        yield Static("", id="code-content")
 
     def on_decision_made(self, event: DecisionMade) -> None:
         """Update with new decision's reasoning."""
@@ -78,19 +92,31 @@ class ReasoningPanel(VerticalScroll):
             content.append("Parse Error: ", style="red bold")
             content.append(decision.parse_error, style="red")
 
-        # Show code for create_skill actions
-        if decision.code:
-            content.append("\n\n")
-            content.append("Generated Code:\n", style="yellow bold")
-            # Truncate very long code
-            code_preview = decision.code[:1000]
-            if len(decision.code) > 1000:
-                code_preview += "\n... (truncated)"
-            content.append(code_preview, style="dim")
-
         # Update the content widget
         content_widget = self.query_one("#reasoning-content", Static)
         content_widget.update(content)
+
+        # Show code with syntax highlighting
+        code_label = self.query_one("#code-label", Static)
+        code_widget = self.query_one("#code-content", Static)
+
+        if decision.code:
+            code_label.update(Text("Generated Code:", style="yellow bold"))
+            # Truncate very long code
+            code_preview = decision.code[:2000]
+            if len(decision.code) > 2000:
+                code_preview += "\n# ... (truncated)"
+            syntax = Syntax(
+                code_preview,
+                "python",
+                theme="monokai",
+                line_numbers=True,
+                word_wrap=True,
+            )
+            code_widget.update(syntax)
+        else:
+            code_label.update("")
+            code_widget.update("")
 
         # Scroll to top to see new content
         self.scroll_home()

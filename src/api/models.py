@@ -302,7 +302,17 @@ class Monster:
     # Characters for sessile monsters (don't move, only attack if you engage them)
     # F = fungi/molds (lichen, brown/yellow/green/red mold, shrieker, violet fungus)
     # P = piercer, lurker above, trapper (ambush predators that don't chase)
+    # Sessile monster CLASSES - all monsters in these classes don't move
+    # 'F' = fungi/molds - sessile
+    # 'P' = puddings/blobs - sessile
     SESSILE_CHARS = frozenset(['F', 'P'])
+
+    # Sessile monster NAMES - specific monsters that don't chase
+    # (for classes where some monsters move and some don't)
+    SESSILE_NAMES = frozenset([
+        'floating eye',   # 'e' - doesn't move, paralyzes on melee
+        'gas spore',      # 'e' - doesn't move, explodes on death
+    ])
 
     @property
     def is_hostile(self) -> bool:
@@ -312,7 +322,12 @@ class Monster:
     @property
     def is_sessile(self) -> bool:
         """Check if monster is sessile (doesn't move/chase)."""
-        return self.char in self.SESSILE_CHARS
+        # Check by character class first
+        if self.char in self.SESSILE_CHARS:
+            return True
+        # Check by specific monster name
+        name_lower = self.name.lower()
+        return any(sessile in name_lower for sessile in self.SESSILE_NAMES)
 
     @property
     def is_chasing(self) -> bool:

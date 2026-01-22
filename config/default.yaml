@@ -6,7 +6,7 @@ agent:
   # LLM provider: "openrouter" or "anthropic"
   provider: "openrouter"
   # LLM model to use for strategic decisions (OpenRouter format)
-  model: "google/gemini-3-flash-preview"
+  model: "google/gemini-3-pro-preview"
   # OpenRouter base URL
   base_url: "https://openrouter.ai/api/v1"
   # Temperature for LLM sampling (0.0 = deterministic, 1.0 = creative)
@@ -15,7 +15,7 @@ agent:
   # Options: "none" (disabled), "minimal", "low", "medium", "high", "xhigh"
   # Higher values = more thinking tokens, better for complex reasoning
   # Thinking tokens are billed as output tokens
-  reasoning: "high"
+  reasoning: "medium"
 
   # Runtime settings
   max_turns: 100000
@@ -31,6 +31,9 @@ agent:
   # Message history: 0 = unlimited (compress old), N = keep only last N turns
   # Old user messages are compressed to just last_result (map stripped)
   max_history_turns: 0
+  # How many recent turns keep their full map (0 = only current turn has map)
+  # Higher values give more spatial context but use more tokens
+  maps_in_history: 1
 
 # Environment settings
 environment:
@@ -53,15 +56,6 @@ skills:
   min_success_rate_to_save: 0.3
   # Maximum actions per skill execution
   max_actions_per_skill: 500
-
-# Memory settings
-memory:
-  # Path to SQLite database
-  database_path: "./data/memory.db"
-  # Maximum items in short-term memory
-  max_short_term_items: 100
-  # Enable dungeon mapping
-  enable_dungeon_memory: true
 
 # Logging settings
 logging:

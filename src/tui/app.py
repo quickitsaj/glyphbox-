@@ -16,7 +16,6 @@ from .logging import setup_run_logging, teardown_run_logging, get_log_file
 from .runner import TUIAgentRunner
 from .widgets import (
     ControlsWidget,
-    DecisionLogWidget,
     GameScreenWidget,
     ReasoningPanel,
     StatsBar,
@@ -63,12 +62,8 @@ class NetHackTUI(App):
         height: 100%;
     }
 
-    #decision-log {
-        height: 50%;
-    }
-
     #reasoning-panel {
-        height: 50%;
+        height: 100%;
     }
 
     #stats-bar {
@@ -112,7 +107,6 @@ class NetHackTUI(App):
         yield Container(
             Horizontal(
                 Vertical(
-                    DecisionLogWidget(id="decision-log"),
                     ReasoningPanel(id="reasoning-panel"),
                     id="left-panel",
                 ),
@@ -155,21 +149,14 @@ class NetHackTUI(App):
     def on_decision_made(self, event: DecisionMade) -> None:
         """Forward decision event to widgets."""
         try:
-            decision_log = self.query_one("#decision-log", DecisionLogWidget)
-            decision_log.on_decision_made(event)
-
             reasoning_panel = self.query_one("#reasoning-panel", ReasoningPanel)
             reasoning_panel.on_decision_made(event)
         except Exception as e:
             logger.error(f"Error handling DecisionMade: {e}")
 
     def on_skill_executed(self, event: SkillExecuted) -> None:
-        """Forward skill execution event to decision log."""
-        try:
-            decision_log = self.query_one("#decision-log", DecisionLogWidget)
-            decision_log.on_skill_executed(event)
-        except Exception as e:
-            logger.error(f"Error handling SkillExecuted: {e}")
+        """Handle skill execution event (currently unused)."""
+        pass
 
     def on_game_state_updated(self, event: GameStateUpdated) -> None:
         """Forward game state event to widgets."""

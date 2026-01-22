@@ -3,22 +3,33 @@ Command-line interface for the NetHack agent.
 
 Usage:
     uv run python -m src.cli watch        Watch agent in TUI mode
+    uv run python -m src.cli watch --record   Watch with asciinema recording
     uv run python -m src.cli verify       Verify setup is correct
 """
 
 import argparse
 import logging
+import shutil
+import subprocess
 import sys
+from datetime import datetime
+from pathlib import Path
 
 from src.config import load_config, setup_logging
 
 logger = logging.getLogger(__name__)
+
+RECORDINGS_DIR = Path("./data/recordings")
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
     """Watch the agent play in TUI mode."""
     import asyncio
     import os
+
+    # Handle --record flag by re-invoking under asciinema
+    if getattr(args, 'record', False):
+        return _run_with_recording(args)
 
     # Override model via CLI if specified
     if args.model:
@@ -42,6 +53,52 @@ def cmd_watch(args: argparse.Namespace) -> int:
         return 0
 
     return asyncio.run(run_tui())
+
+
+def _run_with_recording(args: argparse.Namespace) -> int:
+    """Run the TUI with asciinema recording."""
+    # Check if asciinema is installed
+    asciinema_path = shutil.which("asciinema")
+    if not asciinema_path:
+        print("Error: asciinema is not installed.")
+        print("Install it with: brew install asciinema")
+        return 1
+
+    # Create recordings directory
+    RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Generate timestamped filename (matching log file pattern)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    recording_file = RECORDINGS_DIR / f"run_{timestamp}.cast"
+
+    # Build the command to record (same command without --record)
+    inner_cmd = [sys.executable, "-m", "src.cli", "watch"]
+    if args.model:
+        inner_cmd.extend(["--model", args.model])
+
+    # Build asciinema command
+    asciinema_cmd = [
+        asciinema_path,
+        "rec",
+        "--overwrite",
+        "-c", " ".join(inner_cmd),
+        str(recording_file),
+    ]
+
+    print(f"Recording to: {recording_file}")
+    print("Starting TUI with asciinema recording...")
+    print()
+
+    try:
+        result = subprocess.run(asciinema_cmd)
+        print()
+        print(f"Recording saved to: {recording_file}")
+        print(f"Play with: asciinema play {recording_file}")
+        return result.returncode
+    except KeyboardInterrupt:
+        print()
+        print(f"Recording saved to: {recording_file}")
+        return 0
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
@@ -87,6 +144,12 @@ def main() -> int:
         type=str,
         default=None,
         help="Model to use (e.g., anthropic/claude-3-haiku-20240307 for cheap testing)",
+    )
+    watch_parser.add_argument(
+        "--record",
+        "-r",
+        action="store_true",
+        help="Record the session with asciinema (saves to data/recordings/)",
     )
     watch_parser.set_defaults(func=cmd_watch)
 

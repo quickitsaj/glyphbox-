@@ -13,6 +13,9 @@ uv sync
 # Run agent in TUI watch mode
 uv run python -m src.cli watch
 
+# Record TUI session with asciinema
+uv run python -m src.cli watch --record
+
 # Use a different model (cheaper for testing)
 uv run python -m src.cli watch --model anthropic/claude-3-haiku-20240307
 
@@ -118,9 +121,9 @@ Environment variables:
 - `NETHACK_AGENT_MODEL`: Override model
 - `NETHACK_AGENT_LOG_LEVEL`: Override log level
 
-## Logs
+## Logs & Recordings
 
-Run logs are stored in `data/logs/` with filenames like `run_2026-01-19_19-34-49.log`.
+**Logs** are stored in `data/logs/` with filenames like `run_2026-01-19_19-34-49.log`.
 
 Logs include:
 - LLM requests/responses (prompts sent, tool calls received)
@@ -128,6 +131,16 @@ Logs include:
 - Agent decisions and reasoning
 - API call results (successes and failures)
 - Pathfinding debug info
+
+**Recordings** (when using `--record`) are stored in `data/recordings/` as `.cast` files.
+
+```bash
+# Playback a recording
+asciinema play data/recordings/run_2026-01-19_19-34-49.cast
+
+# Upload to asciinema.org for sharing
+asciinema upload data/recordings/run_2026-01-19_19-34-49.cast
+```
 
 ## Key Patterns
 

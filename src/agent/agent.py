@@ -261,13 +261,22 @@ class NetHackAgent:
             # Update state from game
             self._update_game_state()
 
-            # Get decision from LLM
-            decision = await self._get_decision()
-            self.state.last_decision = decision
-            self.state.decisions_made += 1
+            # Get decision from LLM with retry logic for parse errors
+            max_retries = 3
+            decision = None
+            for attempt in range(max_retries):
+                decision = await self._get_decision()
+                self.state.last_decision = decision
+                self.state.decisions_made += 1
+
+                if decision.is_valid:
+                    break
+
+                logger.warning(f"Invalid decision (attempt {attempt + 1}/{max_retries}): {decision.parse_error}")
+                if attempt < max_retries - 1:
+                    logger.info("Retrying to get valid decision...")
 
             if not decision.is_valid:
-                logger.warning(f"Invalid decision: {decision.parse_error}")
                 self.state.consecutive_errors += 1
                 return decision
 
@@ -359,9 +368,13 @@ class NetHackAgent:
         # Get the full game screen (what a human would see)
         game_screen = ""
         current_position = None
+        hostile_monsters = []
+        adjacent_tiles = {}
         if self._api:
             game_screen = self._api.get_screen()
             current_position = self._api.position
+            hostile_monsters = self._api.get_hostile_monsters()
+            adjacent_tiles = self._api.get_adjacent_tiles()
 
         # Format prompt with game screen
         prompt = self.prompts.format_decision_prompt(
@@ -369,6 +382,8 @@ class NetHackAgent:
             last_result=last_result,
             game_screen=game_screen,
             current_position=current_position,
+            hostile_monsters=hostile_monsters,
+            adjacent_tiles=adjacent_tiles,
         )
 
         # Get LLM response with tool calling
@@ -423,8 +438,9 @@ class NetHackAgent:
         Build message list for LLM context.
 
         - Current user message: full content (map + state + last_result)
-        - Old user messages: compressed to just last_result (map stripped)
-        - Assistant messages: kept in full (contain code + reasoning)
+        - Recent user messages (within maps_in_history): full content with map
+        - Older user messages: compressed to just last_result (map stripped)
+        - Assistant messages: kept with reasoning_details
 
         If max_history_turns > 0, applies a sliding window.
         If max_history_turns == 0, keeps all history (just compresses old user messages).
@@ -436,18 +452,34 @@ class NetHackAgent:
         else:
             conv_slice = self._conversation
 
-        # Compress old user messages, keep assistant messages in full
+        # Count user messages to determine which keep their maps
+        num_user_msgs = sum(1 for msg in conv_slice if msg.get("role") == "user")
+
+        # maps_in_history controls how many historical user messages keep full maps
+        # (current turn is added separately and always has full map)
+        keep_map_count = self.config.maps_in_history
+
         messages = []
+        user_msg_counter = 0
         for msg in conv_slice:
             role = msg.get("role", "")
             if role == "user":
-                # Compress user messages (extract last_result only)
-                compressed = self._compress_user_message(msg)
+                # Count from end: if this is one of the last `keep_map_count` user msgs, keep full
+                msgs_from_end = num_user_msgs - user_msg_counter
+                user_msg_counter += 1
+
+                if msgs_from_end <= keep_map_count:
+                    # Keep full content for recent messages (preserves map)
+                    messages.append({"role": "user", "content": msg.get("content", "")})
+                else:
+                    # Compress older messages (strips map, keeps Last Result)
+                    compressed = self._compress_user_message(msg)
+                    if compressed:
+                        messages.append(compressed)
+            elif role == "assistant":
+                compressed = self._compress_assistant_message(msg)
                 if compressed:
                     messages.append(compressed)
-            else:
-                # Keep assistant messages in full (they have code + reasoning)
-                messages.append(msg)
 
         # Add current prompt with full content (map + state + last_result)
         messages.append({"role": "user", "content": current_prompt})
@@ -467,13 +499,33 @@ class NetHackAgent:
         if last_result_marker in content:
             idx = content.index(last_result_marker)
             last_result_section = content[idx:].strip()
-            # Limit size but keep the important feedback
-            if len(last_result_section) > 500:
-                last_result_section = last_result_section[:500] + "..."
             return {"role": "user", "content": f"[Previous turn]\n{last_result_section}"}
 
         # No last_result found, skip this message entirely
         return None
+
+    def _compress_assistant_message(self, msg: dict) -> dict | None:
+        """
+        Compress an assistant message, preserving reasoning_details.
+
+        Keeps:
+        - tool call content (the actual action taken)
+        - reasoning_details (critical for multi-turn reasoning continuity)
+
+        OpenRouter best practices require preserving reasoning_details for the model
+        to maintain chain of thought across tool calls. Without it, "cumulative
+        understanding breaks down, state drift increases, self-correction weakens,
+        and planning degrades."
+        """
+        content = msg.get("content", "")
+        if not content:
+            return None
+
+        # Preserve reasoning_details for multi-turn reasoning continuity
+        result = {"role": "assistant", "content": content}
+        if "reasoning_details" in msg:
+            result["reasoning_details"] = msg["reasoning_details"]
+        return result
 
     def _create_decision_from_tool_call(self, tool_call, raw_response: str) -> AgentDecision:
         """Create AgentDecision from a tool call."""
@@ -527,15 +579,15 @@ class NetHackAgent:
         try:
             result = await self.sandbox.execute_code(code, self._api)
 
-            # Extract game messages and failed API calls from result
+            # Extract game messages and API calls from result
             game_messages = []
             return_value = None
-            failed_calls = []
+            api_calls = []
             autoexplore_result = None
             if result.result:
                 game_messages = result.result.get("game_messages", [])
                 return_value = result.result.get("return_value")
-                failed_calls = result.result.get("failed_api_calls", [])
+                api_calls = result.result.get("api_calls", [])
                 autoexplore_result = result.result.get("autoexplore_result")
 
             self.state.last_skill_result = {
@@ -544,7 +596,7 @@ class NetHackAgent:
                 "error": result.error,
                 "return_value": return_value,
                 "messages": game_messages,  # Include game messages for LLM feedback
-                "failed_api_calls": failed_calls,  # Include failed API calls for feedback
+                "api_calls": api_calls,  # Include ALL API calls for feedback
             }
 
             # Include stdout if there was any output

@@ -225,9 +225,12 @@ def get_visible_monsters(obs: Observation) -> list[Monster]:
                 info = parse_glyph(glyph, char, description)
 
                 # Determine hostility from screen description
-                # NetHack prefixes peaceful monsters with "peaceful "
-                is_peaceful = "peaceful" in description.lower()
-                is_tame = info.glyph_type == GlyphType.PET
+                # NetHack prefixes peaceful monsters with "peaceful " and pets with "tame "
+                desc_lower = description.lower()
+                is_peaceful = "peaceful" in desc_lower
+                # Check both glyph type AND description for tame status
+                # (description is more reliable - glyph detection can fail in edge cases)
+                is_tame = info.glyph_type == GlyphType.PET or "tame" in desc_lower
 
                 monsters.append(
                     Monster(
