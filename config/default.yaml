@@ -6,7 +6,7 @@ agent:
   # LLM provider: "openrouter" or "anthropic"
   provider: "openrouter"
   # LLM model to use for strategic decisions (OpenRouter format)
-  model: "google/gemini-3-pro-preview"
+  model: "openai/gpt-4o-mini"
   # OpenRouter base URL
   base_url: "https://openrouter.ai/api/v1"
   # Temperature for LLM sampling (0.0 = deterministic, 1.0 = creative)
@@ -15,7 +15,7 @@ agent:
   # Options: "none" (disabled), "minimal", "low", "medium", "high", "xhigh"
   # Higher values = more thinking tokens, better for complex reasoning
   # Thinking tokens are billed as output tokens
-  reasoning: "medium"
+  reasoning: "high"
 
   # Runtime settings
   max_turns: 100000

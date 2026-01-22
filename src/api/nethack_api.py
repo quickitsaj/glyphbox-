@@ -628,10 +628,12 @@ class NetHackAPI:
                     turn_elapsed=result.turn_elapsed,
                 )
 
-            # Check if we've been interrupted by combat or other events
-            # (monster appeared, took damage, etc.)
-            if self.get_hostile_monsters():
-                all_messages.append("Movement interrupted - hostile monster appeared")
+            # Check if we've been interrupted by chasing monsters
+            # Sessile monsters (floating eyes, molds, etc.) don't interrupt travel
+            hostiles = self.get_hostile_monsters()
+            chasing = [m for m in hostiles if m.is_chasing]
+            if chasing:
+                all_messages.append(f"Movement interrupted - {chasing[0].name} appeared")
                 return ActionResult(
                     success=False,
                     messages=all_messages,
