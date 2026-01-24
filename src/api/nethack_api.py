@@ -108,6 +108,10 @@ class NetHackAPI:
         self._last_prayer_turn = 0
         self._message_history: list[str] = []
         self._dungeon_memory = dungeon_memory or DungeonMemory()
+        # Reminders and notes for agent context
+        self._reminders: list[tuple[int, str]] = []  # (fire_turn, message)
+        self._notes: dict[int, tuple[int, str]] = {}  # {note_id: (expire_turn, message)}
+        self._next_note_id: int = 1
 
         logger.info(f"NetHackAPI initialized with env={env_name}")
 
@@ -125,6 +129,9 @@ class NetHackAPI:
         self._last_prayer_turn = 0
         self._message_history = []
         self._dungeon_memory.clear()  # Reset exploration tracking for new game
+        self._reminders = []
+        self._notes = {}
+        self._next_note_id = 1
         # Record initial position and visible tiles for pathfinding
         self._mark_current_position_stepped()
         logger.info("Episode started")
@@ -438,6 +445,66 @@ class NetHackAPI:
         if not self.observation:
             return []
         return self.observation.get_screen_lines()
+
+    def get_local_map(self, radius: int = 7) -> str:
+        """
+        Get an LLM-optimized local map centered on the player.
+
+        Shows only tiles within `radius` of the player position,
+        with coordinate guides on the edges for spatial reasoning.
+        Includes the status bar (last 2 rows) for HP/stats info.
+
+        Args:
+            radius: Number of tiles in each direction from player
+
+        Returns:
+            Formatted local map string with coordinate guides and status bar
+        """
+        if not self.observation:
+            return ""
+
+        obs = self.observation
+        player_x = obs.player_x
+        player_y = obs.player_y
+
+        # Calculate view bounds (map area is rows 1-21, cols 0-78)
+        # Row 0 is message line, rows 22-23 are status bar
+        x_min = max(0, player_x - radius)
+        x_max = min(78, player_x + radius)
+        y_min = max(1, player_y - radius)  # Start at row 1 (skip message line)
+        y_max = min(20, player_y + radius)  # Max row is 20 (0-indexed, 21 rows total)
+
+        lines = []
+
+        # Header
+        lines.append(f"LOCAL VIEW (radius={radius} around you, N=up):")
+
+        # Build column header (x coordinates)
+        # Use 4-char wide cells for better visual alignment
+        row_label_width = 6  # "   XX:" = 6 chars
+        col_header = " " * row_label_width
+        for x in range(x_min, x_max + 1):
+            col_header += f"{x:^4d}"  # Center the number in 4 chars
+        lines.append(col_header)
+
+        # Build map rows with row labels (y coordinates)
+        for y in range(y_min, y_max + 1):
+            row_label = f"{y:5d}:"
+            row_chars = ""
+            for x in range(x_min, x_max + 1):
+                char = chr(obs.chars[y, x])
+                row_chars += f" {char}  "  # Center char in 4 chars (1 space + char + 2 spaces)
+            lines.append(row_label + row_chars)
+
+        # Add blank line separator
+        lines.append("")
+
+        # Append status bar (last 2 rows from tty_chars - rows 22 and 23)
+        for row_idx in [22, 23]:
+            status_line = bytes(obs.tty_chars[row_idx]).decode("latin-1", errors="replace").rstrip()
+            lines.append(status_line)
+
+        return "\n".join(lines)
 
     def get_message(self) -> str:
         """Get the current game message."""
@@ -1554,3 +1621,97 @@ class NetHackAPI:
     def turns_since_last_prayer(self) -> int:
         """Turns elapsed since last prayer. Use to check prayer timeout (~500 turns needed)."""
         return self.turn - self._last_prayer_turn
+
+    # ==================== Reminders and Notes ====================
+
+    def add_reminder(self, turns: int, message: str) -> None:
+        """
+        Add a reminder that fires after N turns.
+
+        The reminder will appear once in the agent context when the specified
+        number of turns have passed, then be automatically removed.
+
+        Example: After picking up a corpse, remind in 50 turns that it may be rotten.
+
+        Args:
+            turns: Number of turns until the reminder fires
+            message: The reminder message
+        """
+        fire_turn = self.turn + turns
+        self._reminders.append((fire_turn, message))
+
+    def add_note(self, turns: int, message: str) -> int:
+        """
+        Add a note that persists for N turns, or permanently if turns=0.
+
+        The note will appear in the agent context every turn until the specified
+        number of turns have elapsed (or until manually removed if turns=0).
+
+        Examples:
+            nh.add_note(10, "Wand may be running low")  # Expires in 10 turns
+            note_id = nh.add_note(0, "Have wand of death")  # Persistent until removed
+
+        Args:
+            turns: Number of turns the note should persist (0 = permanent)
+            message: The note message
+
+        Returns:
+            The note ID (use with remove_note() to remove persistent notes)
+        """
+        note_id = self._next_note_id
+        self._next_note_id += 1
+        expire_turn = 0 if turns == 0 else self.turn + turns
+        self._notes[note_id] = (expire_turn, message)
+        return note_id
+
+    def remove_note(self, note_id: int) -> bool:
+        """
+        Remove a note by its ID.
+
+        Useful for removing persistent notes (turns=0) when they're no longer relevant.
+
+        Args:
+            note_id: The ID returned by add_note()
+
+        Returns:
+            True if the note was removed, False if it didn't exist
+        """
+        if note_id in self._notes:
+            del self._notes[note_id]
+            return True
+        return False
+
+    def get_fired_reminders(self) -> list[str]:
+        """
+        Get reminders that have fired (current turn >= fire turn).
+
+        Fired reminders are removed from the list after being returned.
+
+        Returns:
+            List of reminder messages that have fired
+        """
+        current = self.turn
+        fired = [msg for fire_turn, msg in self._reminders if current >= fire_turn]
+        self._reminders = [(t, m) for t, m in self._reminders if current < t]
+        return fired
+
+    def get_active_notes(self) -> list[tuple[int, str]]:
+        """
+        Get notes that are still active (not expired).
+
+        Expired notes (expire_turn > 0 and current turn >= expire_turn) are removed.
+        Persistent notes (expire_turn = 0) are never automatically removed.
+
+        Returns:
+            List of (note_id, message) tuples for active notes
+        """
+        current = self.turn
+        # Remove expired notes (but not persistent ones where expire_turn=0)
+        expired_ids = [
+            nid for nid, (expire_turn, _) in self._notes.items()
+            if expire_turn > 0 and current >= expire_turn
+        ]
+        for nid in expired_ids:
+            del self._notes[nid]
+        # Return active notes as (id, message) tuples
+        return [(nid, msg) for nid, (_, msg) in sorted(self._notes.items())]

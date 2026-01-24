@@ -365,20 +365,28 @@ class NetHackAgent:
         # Get last result
         last_result = self.state.last_skill_result
 
-        # Get the full game screen (what a human would see)
+        # Get the game screen (local map or full screen based on config)
         game_screen = ""
         current_position = None
         hostile_monsters = []
         adjacent_tiles = None
         inventory = None
+        reminders = []
+        notes = []
         if self._api:
-            game_screen = self._api.get_screen()
+            if self.config.local_map_mode:
+                game_screen = self._api.get_local_map(self.config.local_map_radius)
+            else:
+                game_screen = self._api.get_screen()
             current_position = self._api.position
             hostile_monsters = self._api.get_hostile_monsters()
             if self.config.show_adjacent_tiles:
                 adjacent_tiles = self._api.get_adjacent_tiles()
             if self.config.show_inventory:
                 inventory = self._api.get_inventory()
+            # Get fired reminders and active notes
+            reminders = self._api.get_fired_reminders()
+            notes = self._api.get_active_notes()
 
         # Format prompt with game screen
         prompt = self.prompts.format_decision_prompt(
@@ -389,6 +397,8 @@ class NetHackAgent:
             hostile_monsters=hostile_monsters,
             adjacent_tiles=adjacent_tiles,
             inventory=inventory,
+            reminders=reminders,
+            notes=notes,
         )
 
         # Get LLM response with tool calling
@@ -475,7 +485,13 @@ class NetHackAgent:
 
                 if msgs_from_end <= keep_map_count:
                     # Keep full content for recent messages (preserves map)
-                    messages.append({"role": "user", "content": msg.get("content", "")})
+                    # But mark it as historical so agent knows it's not current
+                    content = msg.get("content", "")
+                    content = content.replace(
+                        "=== CURRENT GAME VIEW ===",
+                        f"=== HISTORICAL GAME VIEW ({msgs_from_end} turn(s) ago) ==="
+                    )
+                    messages.append({"role": "user", "content": content})
                 else:
                     # Compress older messages (strips map, keeps Last Result)
                     compressed = self._compress_user_message(msg)

@@ -131,6 +131,8 @@ class PromptManager:
         hostile_monsters: Optional[list[Any]] = None,
         adjacent_tiles: Optional[dict[str, str]] = None,
         inventory: Optional[list[Any]] = None,
+        reminders: Optional[list[str]] = None,
+        notes: Optional[list[tuple[int, str]]] = None,
     ) -> str:
         """
         Format a decision prompt with current game context.
@@ -143,6 +145,8 @@ class PromptManager:
             hostile_monsters: List of hostile Monster objects
             adjacent_tiles: Dict mapping direction names to tile descriptions
             inventory: List of Item objects in player's inventory
+            reminders: List of reminder messages that just fired
+            notes: List of (note_id, message) tuples for active notes
 
         Returns:
             Formatted decision prompt
@@ -275,6 +279,22 @@ class PromptManager:
                     inv_lines.append(f"  {item.slot}: {item.name}")
             inventory_text = "\n".join(inv_lines)
 
+        # Format reminders (one-time alerts that just fired)
+        reminders_text = ""
+        if reminders:
+            reminder_lines = ["REMINDERS (just triggered):"]
+            for r in reminders:
+                reminder_lines.append(f"  - {r}")
+            reminders_text = "\n".join(reminder_lines)
+
+        # Format notes with IDs (for removal via remove_note())
+        notes_text = ""
+        if notes:
+            note_lines = ["Notes (use nh.remove_note(id) to remove):"]
+            for note_id, msg in notes:
+                note_lines.append(f"  {note_id}. {msg}")
+            notes_text = "\n".join(note_lines)
+
         kwargs = {
             "game_screen": game_screen or "Screen not available",
             "position": position_text,
@@ -283,6 +303,8 @@ class PromptManager:
             "hostile_monsters": monsters_text,
             "inventory": inventory_text,
             "skills_section": skills_section,
+            "reminders": reminders_text,
+            "notes": notes_text,
         }
 
         return self.format_template("decision", **kwargs)
@@ -521,6 +543,9 @@ nh.look()                    # Look at current square
 **Utility:**
 nh.wait()                    # Wait one turn
 nh.search()                  # Search for secrets
+nh.add_reminder(turns, msg)  # One-time reminder after N turns
+nh.add_note(turns, msg)      # Persistent note for N turns (0 = permanent)
+nh.remove_note(note_id)      # Remove a note by ID
 
 ### State Queries (don't consume turns)
 
@@ -608,6 +633,8 @@ DECISION_PROMPT = """=== CURRENT GAME VIEW ===
 {adjacent_tiles}
 {hostile_monsters}
 {inventory}
+{reminders}
+{notes}
 {skills_section}
 Last Result:
 {last_result}

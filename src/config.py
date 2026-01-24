@@ -59,6 +59,10 @@ class AgentConfig:
     show_inventory: bool = True
     # Show adjacent tiles (N, S, E, W, etc.) with descriptions
     show_adjacent_tiles: bool = True
+    # Local map mode: show only tiles around player with coordinate guides (LLM-optimized)
+    local_map_mode: bool = False
+    # Tiles in each direction from player (7 = 15x15 total view)
+    local_map_radius: int = 7
 
     def get_reasoning_effort(self) -> Optional[ReasoningEffort]:
         """Get reasoning effort as enum, or None if disabled."""

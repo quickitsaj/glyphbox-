@@ -66,6 +66,51 @@ class TestNetHackAPIQueries:
         lines = screen.split("\n")
         assert len(lines) >= 20
 
+    def test_get_local_map(self, nethack_api):
+        """Test get_local_map method returns LLM-optimized local view."""
+        nethack_api.reset()
+        local_map = nethack_api.get_local_map(radius=7)
+
+        assert isinstance(local_map, str)
+        lines = local_map.split("\n")
+
+        # Should have header line
+        assert "LOCAL VIEW" in lines[0]
+        assert "radius=7" in lines[0]
+
+        # Should have coordinate headers and row labels
+        # Column header line should have numbers
+        assert any(char.isdigit() for char in lines[1])
+
+        # Map rows should have row labels (y coordinates)
+        # Row labels look like "   5:" or similar
+        map_lines = [l for l in lines[2:] if ":" in l and l.strip()[0].isdigit()]
+        assert len(map_lines) > 0
+
+        # Should include status bar (last 2 lines should have game info)
+        # Status bar contains things like "HP:", "Dlvl:", etc.
+        status_lines = "\n".join(lines[-2:])
+        # Should have some player stat info
+        assert any(stat in status_lines for stat in ["HP", "Dlvl", "St:", "Pw:"])
+
+        # Should contain player @ symbol somewhere in the map
+        assert "@" in local_map
+
+    def test_get_local_map_different_radius(self, nethack_api):
+        """Test get_local_map with different radius values."""
+        nethack_api.reset()
+
+        # Test with smaller radius
+        small_map = nethack_api.get_local_map(radius=3)
+        large_map = nethack_api.get_local_map(radius=10)
+
+        # Larger radius should produce more content
+        assert len(large_map) > len(small_map)
+
+        # Both should have the header with correct radius
+        assert "radius=3" in small_map
+        assert "radius=10" in large_map
+
     def test_get_message(self, nethack_api):
         """Test get_message method."""
         nethack_api.reset()
@@ -285,3 +330,126 @@ class TestNetHackAPIGameplay:
         # State should still be valid
         stats = nethack_api.get_stats()
         assert stats is not None
+
+
+class TestRemindersAndNotes:
+    """Tests for reminder and note functionality."""
+
+    def test_add_reminder_stores_correctly(self, nethack_api):
+        """Test that add_reminder stores the reminder with correct fire turn."""
+        nethack_api.reset()
+        current_turn = nethack_api.turn
+
+        nethack_api.add_reminder(10, "Test reminder")
+
+        # Reminder should be stored with fire_turn = current_turn + 10
+        assert len(nethack_api._reminders) == 1
+        fire_turn, message = nethack_api._reminders[0]
+        assert fire_turn == current_turn + 10
+        assert message == "Test reminder"
+
+    def test_get_fired_reminders_returns_and_removes(self, nethack_api):
+        """Test that get_fired_reminders returns fired reminders and removes them."""
+        nethack_api.reset()
+
+        # Add a reminder that fires immediately (0 turns)
+        nethack_api.add_reminder(0, "Immediate reminder")
+        # Add one that hasn't fired yet
+        nethack_api.add_reminder(1000, "Future reminder")
+
+        fired = nethack_api.get_fired_reminders()
+
+        assert len(fired) == 1
+        assert fired[0] == "Immediate reminder"
+        # Only the future reminder should remain
+        assert len(nethack_api._reminders) == 1
+        assert nethack_api._reminders[0][1] == "Future reminder"
+
+    def test_add_note_returns_id(self, nethack_api):
+        """Test that add_note returns a unique note ID."""
+        nethack_api.reset()
+
+        id1 = nethack_api.add_note(10, "Note 1")
+        id2 = nethack_api.add_note(20, "Note 2")
+
+        assert id1 == 1
+        assert id2 == 2
+        assert id1 != id2
+
+    def test_add_note_persistent(self, nethack_api):
+        """Test that add_note with turns=0 creates a persistent note."""
+        nethack_api.reset()
+
+        note_id = nethack_api.add_note(0, "Persistent note")
+
+        # Check it's stored with expire_turn=0
+        assert note_id in nethack_api._notes
+        expire_turn, message = nethack_api._notes[note_id]
+        assert expire_turn == 0
+        assert message == "Persistent note"
+
+    def test_get_active_notes_returns_tuples(self, nethack_api):
+        """Test that get_active_notes returns (id, message) tuples."""
+        nethack_api.reset()
+
+        id1 = nethack_api.add_note(100, "Note 1")
+        id2 = nethack_api.add_note(0, "Persistent note")
+
+        notes = nethack_api.get_active_notes()
+
+        assert len(notes) == 2
+        # Should be sorted by ID
+        assert notes[0] == (id1, "Note 1")
+        assert notes[1] == (id2, "Persistent note")
+
+    def test_get_active_notes_removes_expired(self, nethack_api):
+        """Test that get_active_notes removes expired notes."""
+        nethack_api.reset()
+
+        # Add a note that expires immediately
+        nethack_api.add_note(0, "Persistent")  # This one won't expire
+        # Manually add an expired note for testing
+        current_turn = nethack_api.turn
+        nethack_api._notes[99] = (current_turn, "Already expired")  # expire at current turn
+
+        notes = nethack_api.get_active_notes()
+
+        # Only the persistent note should remain
+        assert len(notes) == 1
+        assert notes[0][1] == "Persistent"
+
+    def test_remove_note_success(self, nethack_api):
+        """Test that remove_note successfully removes a note."""
+        nethack_api.reset()
+
+        note_id = nethack_api.add_note(0, "To be removed")
+        assert note_id in nethack_api._notes
+
+        result = nethack_api.remove_note(note_id)
+
+        assert result is True
+        assert note_id not in nethack_api._notes
+
+    def test_remove_note_nonexistent(self, nethack_api):
+        """Test that remove_note returns False for nonexistent note."""
+        nethack_api.reset()
+
+        result = nethack_api.remove_note(999)
+
+        assert result is False
+
+    def test_reset_clears_reminders_and_notes(self, nethack_api):
+        """Test that reset clears all reminders and notes."""
+        nethack_api.reset()
+
+        nethack_api.add_reminder(10, "Reminder")
+        nethack_api.add_note(10, "Note")
+
+        assert len(nethack_api._reminders) == 1
+        assert len(nethack_api._notes) == 1
+
+        nethack_api.reset()
+
+        assert len(nethack_api._reminders) == 0
+        assert len(nethack_api._notes) == 0
+        assert nethack_api._next_note_id == 1
