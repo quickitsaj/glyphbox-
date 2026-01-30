@@ -184,6 +184,7 @@ class TUIAgentRunner:
                     max_hp=stats.max_hp,
                     turn=stats.turn,
                     dungeon_level=stats.dungeon_level,
+                    depth=stats.depth,
                     xp_level=stats.xp_level,
                     score=stats.score,
                     message=message,

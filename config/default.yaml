@@ -10,7 +10,7 @@ agent:
   # OpenRouter base URL
   base_url: "https://openrouter.ai/api/v1"
   # Temperature for LLM sampling (0.0 = deterministic, 1.0 = creative)
-  temperature: 0.0
+  temperature: 0.1
   # Reasoning/thinking effort for models that support extended thinking
   # Options: "none" (disabled), "minimal", "low", "medium", "high", "xhigh"
   # Higher values = more thinking tokens, better for complex reasoning
@@ -30,16 +30,20 @@ agent:
 
   # Message history: 0 = unlimited (compress old), N = keep only last N turns
   # Old user messages are compressed to just last_result (map stripped)
-  max_history_turns: 20
+  max_history_turns: 1000
   # How many recent turns keep their full map (0 = only current turn has map)
   # Higher values give more spatial context but use more tokens
-  maps_in_history: 5
+  maps_in_history: 0
+  # How many recent turns keep full tool call arguments (0 = unlimited)
+  # Older tool calls show just the tool name with "[compacted]" arguments
+  # Keeps reasoning_details regardless
+  tool_calls_in_history: 10
   # Show inventory in context each turn (helps agent track items without querying)
   show_inventory: true
   # Show adjacent tiles (N, S, E, W, etc.) with descriptions
   show_adjacent_tiles: true
   # Local map mode: show only tiles around player with coordinate guides (LLM-optimized)
-  local_map_mode: true
+  local_map_mode: false
   # Tiles in each direction from player (7 = 15x15 total view)
   local_map_radius: 7
 

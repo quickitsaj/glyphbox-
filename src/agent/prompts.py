@@ -5,13 +5,9 @@ Manages prompt templates and context formatting for LLM interactions.
 """
 
 import logging
-from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
-
-# Default prompts directory
-DEFAULT_PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 
 
 def _deduplicate_with_counts(items: list[str]) -> list[tuple[str, int]]:
@@ -33,12 +29,10 @@ class PromptManager:
     """
     Manages prompt templates for the agent.
 
-    Loads templates from files and provides methods to format
-    prompts with game context.
+    Provides methods to format prompts with game context.
 
     Example usage:
         prompts = PromptManager(skills_enabled=False)
-        prompts.load_templates()
 
         # Format a decision prompt
         prompt = prompts.format_decision_prompt(
@@ -48,16 +42,16 @@ class PromptManager:
         )
     """
 
-    def __init__(self, prompts_dir: Optional[str] = None, skills_enabled: bool = False):
+    def __init__(self, skills_enabled: bool = False, local_map_mode: bool = False):
         """
         Initialize the prompt manager.
 
         Args:
-            prompts_dir: Directory containing prompt templates
             skills_enabled: Whether skill tools are enabled
+            local_map_mode: Whether agent sees local map (True) or full map (False)
         """
-        self.prompts_dir = Path(prompts_dir) if prompts_dir else DEFAULT_PROMPTS_DIR
         self.skills_enabled = skills_enabled
+        self.local_map_mode = local_map_mode
         self._templates: dict[str, str] = {}
         self._load_default_templates()
 
@@ -65,7 +59,10 @@ class PromptManager:
         """Load default embedded templates."""
         # Build system prompt with appropriate tools section
         # Use replace() instead of format() to avoid issues with { } in code examples
-        tools_section = TOOLS_SECTION_SKILLS if self.skills_enabled else TOOLS_SECTION_NO_SKILLS
+        if self.local_map_mode:
+            tools_section = TOOLS_SECTION_LOCAL_SKILLS if self.skills_enabled else TOOLS_SECTION_LOCAL_NO_SKILLS
+        else:
+            tools_section = TOOLS_SECTION_FULL_SKILLS if self.skills_enabled else TOOLS_SECTION_FULL_NO_SKILLS
         system_prompt = SYSTEM_PROMPT_BASE.replace("{tools_section}", tools_section)
 
         self._templates = {
@@ -74,27 +71,6 @@ class PromptManager:
             "skill_creation": SKILL_CREATION_PROMPT,
             "analysis": ANALYSIS_PROMPT,
         }
-
-    def load_templates(self) -> int:
-        """
-        Load templates from the prompts directory.
-
-        Returns:
-            Number of templates loaded
-        """
-        if not self.prompts_dir.exists():
-            logger.warning(f"Prompts directory not found: {self.prompts_dir}")
-            return 0
-
-        count = 0
-        for template_file in self.prompts_dir.glob("*.txt"):
-            name = template_file.stem
-            self._templates[name] = template_file.read_text()
-            count += 1
-            logger.debug(f"Loaded template: {name}")
-
-        logger.info(f"Loaded {count} prompt templates")
-        return count
 
     def get_template(self, name: str) -> Optional[str]:
         """Get a template by name."""
@@ -131,6 +107,9 @@ class PromptManager:
         hostile_monsters: Optional[list[Any]] = None,
         adjacent_tiles: Optional[dict[str, str]] = None,
         inventory: Optional[list[Any]] = None,
+        items_on_map: Optional[list[Any]] = None,
+        stairs_positions: Optional[tuple[Any, Any]] = None,
+        altars: Optional[list[Any]] = None,
         reminders: Optional[list[str]] = None,
         notes: Optional[list[tuple[int, str]]] = None,
     ) -> str:
@@ -145,6 +124,8 @@ class PromptManager:
             hostile_monsters: List of hostile Monster objects
             adjacent_tiles: Dict mapping direction names to tile descriptions
             inventory: List of Item objects in player's inventory
+            items_on_map: List of Item objects visible on the map (with positions)
+            stairs_positions: Tuple of (stairs_up_position, stairs_down_position)
             reminders: List of reminder messages that just fired
             notes: List of (note_id, message) tuples for active notes
 
@@ -185,7 +166,12 @@ class PromptManager:
             if autoexplore:
                 stop_reason = autoexplore.get("stop_reason", "unknown")
                 steps = autoexplore.get("steps_taken", 0)
-                result_lines.append(f"autoexplore: stopped ({stop_reason}) after {steps} steps")
+                message = autoexplore.get("message", "")
+                # Include message for blocked/informative stop reasons
+                if message and stop_reason in ("blocked", "fully_explored", "hostile"):
+                    result_lines.append(f"autoexplore: stopped ({stop_reason}) after {steps} steps - {message}")
+                else:
+                    result_lines.append(f"autoexplore: stopped ({stop_reason}) after {steps} steps")
 
             # Show ALL API calls with success/failure status
             # This ensures the agent always knows what actions were taken
@@ -225,6 +211,12 @@ class PromptManager:
             # Show output if present
             if last_result.get("output"):
                 result_lines.append(f"output: {last_result['output']}")
+
+            # Show full map if view_full_map was called
+            if last_result.get("full_map"):
+                result_lines.append("=== FULL DUNGEON MAP ===")
+                result_lines.append(last_result["full_map"])
+                result_lines.append("=== END FULL MAP ===")
 
             result_text = "\n".join(result_lines) if result_lines else "None"
         else:
@@ -279,6 +271,34 @@ class PromptManager:
                     inv_lines.append(f"  {item.slot}: {item.name}")
             inventory_text = "\n".join(inv_lines)
 
+        # Format items on map (visible items with coordinates)
+        items_on_map_text = ""
+        if items_on_map:
+            item_lines = ["Items on map:"]
+            for item in items_on_map:
+                item_lines.append(f"  - {item.name} at ({item.position.x}, {item.position.y})")
+            items_on_map_text = "\n".join(item_lines)
+
+        # Format stairs positions (critical for navigation)
+        stairs_text = ""
+        if stairs_positions and len(stairs_positions) == 2:
+            stairs_up, stairs_down = stairs_positions
+            stairs_lines = ["Stairs:"]
+            if stairs_up:
+                stairs_lines.append(f"  - Stairs up (<) at ({stairs_up.x}, {stairs_up.y})")
+            if stairs_down:
+                stairs_lines.append(f"  - Stairs down (>) at ({stairs_down.x}, {stairs_down.y})")
+            if len(stairs_lines) > 1:  # Only show if we found stairs
+                stairs_text = "\n".join(stairs_lines)
+
+        # Format altars
+        altars_text = ""
+        if altars:
+            altar_lines = ["Altars:"]
+            for pos in altars:
+                altar_lines.append(f"  - Altar (_) at ({pos.x}, {pos.y})")
+            altars_text = "\n".join(altar_lines)
+
         # Format reminders (one-time alerts that just fired)
         reminders_text = ""
         if reminders:
@@ -302,6 +322,9 @@ class PromptManager:
             "last_result": result_text,
             "hostile_monsters": monsters_text,
             "inventory": inventory_text,
+            "items_on_map": items_on_map_text,
+            "stairs": stairs_text,
+            "altars": altars_text,
             "skills_section": skills_section,
             "reminders": reminders_text,
             "notes": notes_text,
@@ -443,13 +466,26 @@ class PromptManager:
 # Default Prompt Templates
 # ============================================================================
 
-# Tools section variants
-TOOLS_SECTION_SKILLS = """You have 3 tools available:
+# Tools section variants based on local_map_mode and skills_enabled
+# When local_map_mode=True: agent sees cropped view, needs view_full_map tool
+# When local_map_mode=False: agent sees full map each turn, no need for view_full_map
+
+TOOLS_SECTION_LOCAL_SKILLS = """You have 4 tools available:
+- **execute_code** - Run Python code to interact with the game. Batch multiple operations.
+- **view_full_map** - See the ENTIRE dungeon level (21 rows). Use sparingly - only when local view is insufficient for planning exploration or finding distant features.
+- **write_skill** - Save reusable code as a skill. Code must be: async def skill_name(nh, **params):
+- **invoke_skill** - Run a previously saved skill."""
+
+TOOLS_SECTION_LOCAL_NO_SKILLS = """You have 2 tools available:
+- **execute_code** - Run Python code to interact with the game. Batch multiple operations.
+- **view_full_map** - See the ENTIRE dungeon level (21 rows). Use sparingly - only when local view is insufficient for planning exploration or finding distant features."""
+
+TOOLS_SECTION_FULL_SKILLS = """You have 3 tools available:
 - **execute_code** - Run Python code to interact with the game. Batch multiple operations.
 - **write_skill** - Save reusable code as a skill. Code must be: async def skill_name(nh, **params):
 - **invoke_skill** - Run a previously saved skill."""
 
-TOOLS_SECTION_NO_SKILLS = """You have 1 tool available:
+TOOLS_SECTION_FULL_NO_SKILLS = """You have 1 tool available:
 - **execute_code** - Run Python code to interact with the game. Batch multiple operations."""
 
 # Base system prompt with {tools_section} placeholder
@@ -469,20 +505,7 @@ This includes the dungeon map, messages, and status bar with your stats.
 Your code has access to `nh` (NetHackAPI) and these pre-loaded types:
 - Direction: N, S, E, W, NE, NW, SE, SW
 - Position: x, y coordinates with .distance_to(), .direction_to() methods
-
-**Note:** Blank spaces on the map are UNEXPLORED STONE - not walkable!
-
-IMPORTANT: All API calls are SYNCHRONOUS. Do NOT use await or async. Do NOT use imports.
-Use dir(nh) to explore available methods if needed.
-
-### Navigation (USE THESE - they handle pathfinding for you!)
-
-**nh.travel_to(char)** - Travel to a map feature. This is your PRIMARY movement tool!
-  result = nh.travel_to('>')  # Go to stairs down
-  result = nh.travel_to('<')  # Go to stairs up
-  result = nh.travel_to('+')  # Go to a door
-  result = nh.travel_to('$')  # Go to gold
-  if result.success: nh.go_down()  # Then use stairs
+Do NOT import anything. All types are pre-loaded and imports will fail.
 
 **nh.autoexplore()** - Explore the level automatically. Use for any exploration!
   result = nh.autoexplore()
@@ -493,15 +516,14 @@ Use dir(nh) to explore available methods if needed.
 **nh.move_to(Position)** - Pathfind to a specific coordinate
   nh.move_to(Position(42, 12))  # Walk to that spot
 
-PREFER navigation tools over manual movement! They handle doors, corridors, etc.
-
 ### Actions (all return ActionResult)
 
 ActionResult has: .success (bool), .messages (list[str]), .turn_elapsed (bool)
 Check .messages for feedback like "You hit the goblin!" or "It's a wall."
 
-**Movement (only for single-step moves when you know the way is clear):**
-nh.move(Direction)           # Single step - use travel_to() instead for multi-step!
+**Movement:**
+nh.move(Direction, count=1)  # Move in direction (count=5 moves up to 5 tiles, auto-stops at walls/monsters)
+nh.run(Direction)            # Run until wall/intersection/monster - fast corridor travel
 nh.go_up()                   # Climb stairs up (<) - use AFTER travel_to('<')
 nh.go_down()                 # Descend stairs (>) - use AFTER travel_to('>')
 
@@ -536,13 +558,14 @@ nh.close_door(Direction)     # Close door
 
 **Magic & Special:**
 nh.cast_spell('a', Direction) # Cast memorized spell
+nh.pay()                     # Pay shopkeeper for picked-up items
 nh.pray()                    # Pray to deity (has cooldown)
 nh.engrave("Elbereth")       # Write on floor
 nh.look()                    # Look at current square
 
-**Utility:**
-nh.wait()                    # Wait one turn
-nh.search()                  # Search for secrets
+**Utility (count uses NetHack's repeat prefix - auto-stops on monster/danger):**
+nh.wait(count=1)             # Wait/rest turns (count=10 to rest safely)
+nh.search(count=1)           # Search for secrets (count=20 to find hidden doors)
 nh.add_reminder(turns, msg)  # One-time reminder after N turns
 nh.add_note(turns, msg)      # Persistent note for N turns (0 = permanent)
 nh.remove_note(note_id)      # Remove a note by ID
@@ -559,10 +582,31 @@ nh.turns_since_last_prayer   # int - turns since last prayer (~500 needed)
 nh.dungeon_level             # int - current dungeon level
 nh.position                  # Position - current (x, y)
 nh.turn                      # int - current game turn
+nh.get_adjacent_hostiles()   # list[Monster] - hostiles in adjacent tiles
+Monster has: .name, .position, .is_hostile
 
 Example - combat loop:
-  while nh.hp > nh.max_hp * 0.3 and nh.has_adjacent_hostile:
-      nh.attack(direction)
+  for monster in nh.get_adjacent_hostiles():
+      direction = nh.position.direction_to(monster.position)
+      while nh.hp > 15 and nh.get_adjacent_hostiles():
+          nh.attack(direction)
+
+## CRITICAL: Use Count Parameters Instead of Loops
+
+For repeated actions, use the count parameter instead of Python loops.
+NetHack's count prefix auto-interrupts if a monster appears or attacks - much safer!
+
+BAD - Python loop won't stop if monster appears:
+  for _ in range(10):
+      nh.search()
+
+GOOD - uses NetHack's built-in interrupt:
+  nh.search(count=20)  # Auto-stops if monster appears
+
+GOOD - single action per turn:
+  nh.search()  # Just search once, you'll be called again next turn
+
+The count parameter works for: search(count), wait(count), move(direction, count)
 
 NOTE: HP, position, monsters are ALREADY SHOWN in the game view above.
 DO NOT query for them just to print them - use the view you already have!
@@ -577,55 +621,21 @@ nh.space()                   # Send space - dismiss --More--
 
 nh.find_nearest_item()       # Returns TargetResult with .position and .success
 nh.find_doors()              # list[(Position, is_open)] - all doors on level
+nh.find_altars()             # list[Position] - all altars on level
 
 ### NAVIGATION REMINDER
 
-DO NOT manually navigate with move(Direction) unless target is 1 tile away!
 - To reach stairs: `nh.travel_to('>')` then `nh.go_down()`
 - To explore: `nh.autoexplore()`
 - To reach a position: `nh.move_to(position)`
 
-Manual move() is ONLY for:
-- Attacking adjacent enemies: `nh.attack(Direction.W)`
-- Moving one tile when you can SEE it's clear
-
-## Reading the Map
-
-The map shows what's on the level:
-- Doors ('+' closed), stairs ('<' up, '>' down)
-- Items on the ground ('$' gold, '%' food, ')' weapons, etc.)
-- Monsters (letters like 'g' goblin, 'o' orc, 'd' dog)
-- Blank spaces are UNEXPLORED STONE - not empty walkable area!
-
-**IMPORTANT: Do NOT try to manually navigate by reading the map!**
-You cannot reliably determine paths from ASCII text. Instead:
-- Use `travel_to('>')` to reach stairs, doors, items
-- Use `autoexplore()` to find unexplored areas
-- Use `move_to(position)` if you have exact coordinates
-
-Only use `move(Direction)` for adjacent targets you can verify in "Adjacent tiles".
-
-## EFFICIENCY - Keep Code Minimal
-
-The game view already shows HP, position, monsters. DO NOT print redundant info!
-BAD: `stats = nh.get_stats(); print(f"HP: {stats.hp}")` - already in status bar!
-GOOD: `nh.attack(Direction.W)` - just take the action
-
-## LOOPS MUST CHECK FOR DANGER
-
-Any loop that takes multiple actions MUST check for hostiles between iterations.
-Monsters can appear or wake up at any time - blind loops will get you killed!
-
-BAD:
-  for _ in range(15): nh.search()  # Could die if monster appears!
-
-GOOD:
-  for _ in range(15):
-      if nh.has_adjacent_hostile: break
-      nh.search()
-
-ALSO GOOD: Just call autoexplore() or let the outer agent loop handle it - you'll get
-called again next turn with updated state."""
+You must engage in strategic, long-term planning to survive.
+- Pick up food if you don't have enough. Even if not hungry, you should plan ahead and have enough food for later.
+- Focus on leveling up and getting stronger. Don't just rush headlong into the next level of the dungeon; if you do, you will be too weak and will die.
+- Generally speaking, corpses are only safe to eat if you've just killed them. Otherwise they will be rotted and give you food poisoning, resulting in certain death. One exception is Lichen corpses which are always safe to eat. If you are fainting and have no other option, prefer prayer as a last resort.
+- If you find yourself on a fully explored level with no staircase down, think critically about where the most likely location of the hidden room may be. Search along the walls and corridors leading to the map position you believe this room is most likely around.
+- NetHack is a permadeath game. If you fail, you will not have a chance to recover. You MUST think critically and plan ahead.
+"""
 
 DECISION_PROMPT = """=== CURRENT GAME VIEW ===
 {position}
@@ -633,6 +643,9 @@ DECISION_PROMPT = """=== CURRENT GAME VIEW ===
 {adjacent_tiles}
 {hostile_monsters}
 {inventory}
+{items_on_map}
+{stairs}
+{altars}
 {reminders}
 {notes}
 {skills_section}
@@ -662,11 +675,12 @@ Create a new skill that handles this situation. The skill must:
 
 Available API methods on `nh`:
 - State: get_stats(), get_position(), get_message(), get_visible_monsters(), get_adjacent_hostiles(), get_inventory(), turn, is_done
-- Movement: move(direction), go_up(), go_down()
+- Movement: move(direction, count=1), go_up(), go_down()
 - Combat: attack(direction)
 - Items: pickup(), eat(slot), quaff(slot), wield(slot), wear(slot)
-- Utility: wait(), search(), open_door(direction)
+- Utility: wait(count=1), search(count=1), open_door(direction)
 - Navigation: move_to(target), travel_to(char), autoexplore()
+Note: count parameter uses NetHack's repeat prefix - auto-stops on monster/danger
 
 Respond with a JSON decision including the full skill code in the "code" field."""
 

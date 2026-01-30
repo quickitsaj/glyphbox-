@@ -270,10 +270,25 @@ class LevelMemory:
         if 0 <= x < self.WIDTH and 0 <= y < self.HEIGHT:
             self._tiles[y][x].was_doorway = True
 
+    def clear_doorway(self, x: int, y: int) -> None:
+        """Clear doorway flag (e.g., door was destroyed/removed)."""
+        if 0 <= x < self.WIDTH and 0 <= y < self.HEIGHT:
+            self._tiles[y][x].was_doorway = False
+
     def is_doorway(self, x: int, y: int) -> bool:
         """Check if tile was ever observed as a doorway."""
         tile = self.get_tile(x, y)
         return tile.was_doorway if tile else False
+
+    def mark_trap(self, x: int, y: int, trap_type: str = "trap") -> None:
+        """Mark a tile as having a known trap."""
+        if 0 <= x < self.WIDTH and 0 <= y < self.HEIGHT:
+            self._tiles[y][x].trap_type = trap_type
+
+    def has_trap(self, x: int, y: int) -> bool:
+        """Check if tile has a known trap."""
+        tile = self.get_tile(x, y)
+        return tile.trap_type is not None if tile else False
 
     def mark_seen_walkable(self, x: int, y: int) -> None:
         """Mark a tile as having been observed as walkable."""

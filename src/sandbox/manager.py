@@ -37,7 +37,7 @@ ACTION_METHODS = {
     # Doors
     "open_door", "close_door",
     # Utility
-    "wait", "search", "rest", "pray", "look",
+    "wait", "search", "rest", "pay", "pray", "look",
     # Special
     "cast_spell", "engrave",
     # Raw input

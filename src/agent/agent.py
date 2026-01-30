@@ -115,7 +115,10 @@ class NetHackAgent:
         self.config = config or AgentConfig()
 
         # Components
-        self.prompts = PromptManager(skills_enabled=self.config.skills_enabled)
+        self.prompts = PromptManager(
+            skills_enabled=self.config.skills_enabled,
+            local_map_mode=self.config.local_map_mode,
+        )
         self.parser = DecisionParser()
         self.synthesizer = SkillSynthesizer(
             library=skill_library,
@@ -306,7 +309,7 @@ class NetHackAgent:
             stats = self._api.get_stats()
             position = self._api.get_position()
             monsters = self._api.get_visible_monsters()
-            items = self._api.get_items_here()
+            items = self._api.get_items_here_glyphs()
             message = self._api.get_message()
 
             self.state.turn = stats.turn
@@ -371,6 +374,9 @@ class NetHackAgent:
         hostile_monsters = []
         adjacent_tiles = None
         inventory = None
+        items_on_map = None
+        stairs_positions = None
+        altars = []
         reminders = []
         notes = []
         if self._api:
@@ -384,6 +390,11 @@ class NetHackAgent:
                 adjacent_tiles = self._api.get_adjacent_tiles()
             if self.config.show_inventory:
                 inventory = self._api.get_inventory()
+            if self.config.show_items_on_map:
+                items_on_map = self._api.get_items_on_map()
+            # Always get stairs and altar positions - critical for navigation
+            stairs_positions = self._api.find_stairs()
+            altars = self._api.find_altars()
             # Get fired reminders and active notes
             reminders = self._api.get_fired_reminders()
             notes = self._api.get_active_notes()
@@ -397,6 +408,9 @@ class NetHackAgent:
             hostile_monsters=hostile_monsters,
             adjacent_tiles=adjacent_tiles,
             inventory=inventory,
+            items_on_map=items_on_map,
+            stairs_positions=stairs_positions,
+            altars=altars,
             reminders=reminders,
             notes=notes,
         )
@@ -409,7 +423,7 @@ class NetHackAgent:
 
         response = await self.llm.complete_with_tools(
             messages=messages,
-            tools=get_agent_tools(self.config.skills_enabled),
+            tools=get_agent_tools(self.config.skills_enabled, self.config.local_map_mode),
             system=system,
         )
 
@@ -455,10 +469,11 @@ class NetHackAgent:
         - Current user message: full content (map + state + last_result)
         - Recent user messages (within maps_in_history): full content with map
         - Older user messages: compressed to just last_result (map stripped)
-        - Assistant messages: kept with reasoning_details
+        - Recent assistant messages (within tool_calls_in_history): full tool call
+        - Older assistant messages: compacted (tool name only, arguments replaced)
 
         If max_history_turns > 0, applies a sliding window.
-        If max_history_turns == 0, keeps all history (just compresses old user messages).
+        If max_history_turns == 0, keeps all history (just compresses old messages).
         """
         # Apply sliding window if configured
         if self.config.max_history_turns > 0:
@@ -469,13 +484,18 @@ class NetHackAgent:
 
         # Count user messages to determine which keep their maps
         num_user_msgs = sum(1 for msg in conv_slice if msg.get("role") == "user")
+        # Count assistant messages to determine which keep full tool calls
+        num_assistant_msgs = sum(1 for msg in conv_slice if msg.get("role") == "assistant")
 
         # maps_in_history controls how many historical user messages keep full maps
         # (current turn is added separately and always has full map)
         keep_map_count = self.config.maps_in_history
+        # tool_calls_in_history controls how many keep full arguments (0 = unlimited)
+        keep_tool_call_count = self.config.tool_calls_in_history
 
         messages = []
         user_msg_counter = 0
+        assistant_msg_counter = 0
         for msg in conv_slice:
             role = msg.get("role", "")
             if role == "user":
@@ -498,7 +518,15 @@ class NetHackAgent:
                     if compressed:
                         messages.append(compressed)
             elif role == "assistant":
-                compressed = self._compress_assistant_message(msg)
+                # Count from end: if this is one of the last `keep_tool_call_count` assistant msgs, keep full
+                msgs_from_end = num_assistant_msgs - assistant_msg_counter
+                assistant_msg_counter += 1
+
+                # 0 means unlimited (keep all full)
+                if keep_tool_call_count == 0 or msgs_from_end <= keep_tool_call_count:
+                    compressed = self._compress_assistant_message(msg, compact_arguments=False)
+                else:
+                    compressed = self._compress_assistant_message(msg, compact_arguments=True)
                 if compressed:
                     messages.append(compressed)
 
@@ -525,13 +553,16 @@ class NetHackAgent:
         # No last_result found, skip this message entirely
         return None
 
-    def _compress_assistant_message(self, msg: dict) -> dict | None:
+    def _compress_assistant_message(self, msg: dict, compact_arguments: bool = False) -> dict | None:
         """
         Compress an assistant message, preserving reasoning_details.
 
         Keeps:
         - tool call content (the actual action taken)
         - reasoning_details (critical for multi-turn reasoning continuity)
+
+        If compact_arguments=True, replaces full tool arguments with "[compacted]"
+        to reduce context size while preserving that an action was taken.
 
         OpenRouter best practices require preserving reasoning_details for the model
         to maintain chain of thought across tool calls. Without it, "cumulative
@@ -541,6 +572,18 @@ class NetHackAgent:
         content = msg.get("content", "")
         if not content:
             return None
+
+        # Compact tool call arguments if requested
+        if compact_arguments:
+            try:
+                tool_data = json.loads(content)
+                if isinstance(tool_data, dict) and "tool" in tool_data:
+                    # Replace arguments with compacted marker
+                    compacted = {"tool": tool_data["tool"], "arguments": "[compacted]"}
+                    content = json.dumps(compacted)
+            except (json.JSONDecodeError, TypeError):
+                # Not a tool call JSON, keep as-is
+                pass
 
         # Preserve reasoning_details for multi-turn reasoning continuity
         result = {"role": "assistant", "content": content}
@@ -586,6 +629,9 @@ class NetHackAgent:
 
         elif decision.action == ActionType.INVOKE_SKILL:
             await self._execute_skill(decision.skill_name, decision.params)
+
+        elif decision.action == ActionType.VIEW_FULL_MAP:
+            self._view_full_map()
 
     async def _execute_code(self, code: str) -> None:
         """Execute ad-hoc code in sandbox."""
@@ -640,6 +686,33 @@ class NetHackAgent:
                 "success": False,
                 "error": str(e),
             }
+
+    def _view_full_map(self) -> None:
+        """Get the full dungeon level map for the agent."""
+        if not self._api or not self._api.observation:
+            self.state.last_skill_result = {
+                "tool": "view_full_map",
+                "success": False,
+                "error": "No observation available",
+            }
+            return
+
+        obs = self._api.observation
+        lines = []
+
+        # Map area is rows 1-21 (row 0 is message, rows 22-23 are status bar)
+        for y in range(1, 22):
+            row = bytes(obs.tty_chars[y]).decode("latin-1", errors="replace").rstrip()
+            lines.append(row)
+
+        full_map = "\n".join(lines)
+
+        self.state.last_skill_result = {
+            "tool": "view_full_map",
+            "success": True,
+            "full_map": full_map,
+        }
+        logger.info("Retrieved full map view")
 
     async def _write_skill(self, skill_name: str, code: str) -> None:
         """Write a new skill to the library."""

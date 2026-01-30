@@ -697,9 +697,11 @@ def is_doorway_glyph(glyph: int) -> bool:
     doorways allow diagonal movement.
 
     Glyph values (from CMAP):
-      15 = closed door (no diagonal)
-      16 = open door (no diagonal)
-      17 = broken door (diagonal OK)
+      13 = S_vodoor: vertical open door (no diagonal)
+      14 = S_hodoor: horizontal open door (no diagonal)
+      15 = S_vcdoor: vertical closed door (no diagonal)
+      16 = S_hcdoor: horizontal closed door (no diagonal)
+      12 = S_ndoor: doorless doorway (diagonal OK)
 
     This function is used by both pathfinding and autoexplore to determine
     whether diagonal movement is allowed from/to a position.
@@ -718,9 +720,9 @@ def is_doorway_glyph(glyph: int) -> bool:
             return False
         cmap_idx = glyph - cmap_offset
 
-    # 15 = closed door, 16 = open door (both block diagonal movement)
-    # 17 = broken door (allows diagonal movement)
-    return cmap_idx in (15, 16)
+    # 13/14 = open door, 15/16 = closed door (all block diagonal movement)
+    # 12 = doorless doorway, 17 = broken door (both allow diagonal)
+    return cmap_idx in (13, 14, 15, 16)
 
 
 def _is_doorway_by_context(obs: Observation, x: int, y: int) -> bool:
@@ -775,7 +777,7 @@ def _build_walkability_grid(
     Args:
         obs: Current observation
         avoid_monsters: Mark monster tiles as unwalkable
-        avoid_traps: (Currently unused, traps are walkable)
+        avoid_traps: Mark known trap tiles as unwalkable so paths route around them
         player_can_fly: If False, water/lava tiles are unwalkable
         level_memory: Optional level memory to track/recall doorway positions
         pass_through_doors: If True, treat closed doors as walkable (for travel command)
@@ -839,31 +841,51 @@ def _build_walkability_grid(
                 if is_flight_required_glyph(glyph):
                     walkable = False
 
-            # Check for traps (we can still walk on them, but maybe avoid)
-            # For now, allow walking on traps but could make this configurable
+            # Avoid known traps
+            if avoid_traps and walkable:
+                is_trap = nethack.glyph_is_trap(glyph)
+                if is_trap:
+                    # Visible trap glyph - record in memory and mark unwalkable
+                    if level_memory:
+                        level_memory.mark_trap(x, y)
+                    walkable = False
+                elif level_memory and level_memory.has_trap(x, y):
+                    # Trap hidden by item/corpse/monster/player - trust memory
+                    walkable = False
 
-            # Check if current glyph is a doorway
+            # Check if current glyph is a doorway (door present, blocks diagonal movement)
             is_doorway = is_doorway_glyph(glyph)
 
             # Record doorways in level memory (so we remember them when player stands on them)
             if is_doorway and level_memory:
                 level_memory.mark_doorway(x, y)
 
-            # Also check level memory for remembered doorways (player glyph overwrites door glyph)
-            if not is_doorway and level_memory and level_memory.is_doorway(x, y):
-                is_doorway = True
-
-            # Final fallback: if still not detected as doorway, check if player is standing here
-            # The player glyph overwrites the door glyph, so we infer from adjacent walls
             if not is_doorway:
+                is_cmap = nethack.glyph_is_cmap(glyph)
+                is_stone = is_cmap and nethack.glyph_to_cmap(glyph) == 0
                 player_pos = get_position(obs)
-                if x == player_pos.x and y == player_pos.y:
-                    if _is_doorway_by_context(obs, x, y):
+                is_player_here = (x == player_pos.x and y == player_pos.y)
+
+                if level_memory:
+                    if level_memory.is_doorway(x, y):
+                        if is_cmap and not is_stone:
+                            # Visible terrain glyph that's not a door (e.g., cmap 12
+                            # doorless doorway after door was destroyed) - clear memory
+                            level_memory.clear_doorway(x, y)
+                            logger.debug(f"doorway: ({x}, {y}) cleared from level_memory (terrain glyph cmap={nethack.glyph_to_cmap(glyph)})")
+                        else:
+                            # Stone (out of sight), player glyph, item, or monster
+                            # on top of the door - trust memory
+                            is_doorway = True
+                            logger.debug(f"doorway: ({x}, {y}) from level_memory")
+                    # If level_memory exists but tile was never marked as doorway,
+                    # trust that - don't use context detection (avoids false positives
+                    # on doorless doorways where walls are on both sides)
+                else:
+                    # No level_memory at all - use context as fallback for player position
+                    if is_player_here and _is_doorway_by_context(obs, x, y):
                         is_doorway = True
-                        logger.debug(f"doorway: ({x}, {y}) detected by context (player standing on doorway)")
-                        # Record in level memory for future reference
-                        if level_memory:
-                            level_memory.mark_doorway(x, y)
+                        logger.debug(f"doorway: ({x}, {y}) detected by context (no level_memory)")
 
             walkable_row.append(walkable)
             doorway_row.append(is_doorway)

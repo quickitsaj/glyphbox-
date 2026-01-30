@@ -172,6 +172,7 @@ def get_stats(obs: Observation) -> Stats:
         alignment=Alignment.from_blstats(int(bl[BL_ALIGN])),
         dungeon_level=int(bl[BL_DLEVEL]),
         dungeon_number=int(bl[BL_DNUM]),
+        depth=int(bl[BL_DEPTH]),
         turn=int(bl[BL_TIME]),
         score=int(bl[BL_SCORE]),
         position=Position(int(bl[BL_X]), int(bl[BL_Y])),
@@ -519,6 +520,10 @@ def find_stairs(obs: Observation) -> tuple[Optional[Position], Optional[Position
     """
     Find stairs up and down on current level.
 
+    Note: Uses character data, so stairs won't be detected if the player
+    is standing on them (character shows '@' instead of '<' or '>').
+    The caller should use level memory to track previously seen stair positions.
+
     Returns:
         Tuple of (stairs_up_position, stairs_down_position), either may be None
     """
@@ -542,6 +547,11 @@ def find_doors(obs: Observation) -> list[tuple[Position, bool]]:
 
     Returns:
         List of (position, is_open) tuples
+
+    NLE cmap IDs for doors:
+        12: doorway (no door, just opening)
+        13-14: open door (vertical/horizontal)
+        15-16: closed door (vertical/horizontal)
     """
     doors = []
 
@@ -550,12 +560,31 @@ def find_doors(obs: Observation) -> list[tuple[Position, bool]]:
             glyph = int(obs.glyphs[y, x])
             info = parse_glyph(glyph)
 
-            if info.cmap_id == 15:  # Closed door
+            if info.cmap_id in (15, 16):  # Closed door (vertical/horizontal)
                 doors.append((Position(x, y), False))
-            elif info.cmap_id == 16:  # Open door
+            elif info.cmap_id in (13, 14):  # Open door (vertical/horizontal)
                 doors.append((Position(x, y), True))
 
     return doors
+
+
+def find_altars(obs: Observation) -> list[Position]:
+    """
+    Find all altars on current level.
+
+    NLE cmap ID for altar: 27
+    """
+    altars = []
+
+    for y in range(21):
+        for x in range(79):
+            glyph = int(obs.glyphs[y, x])
+            info = parse_glyph(glyph)
+
+            if info.cmap_id == 27:
+                altars.append(Position(x, y))
+
+    return altars
 
 
 def _estimate_threat(monster_id: int) -> int:

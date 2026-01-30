@@ -36,6 +36,7 @@ from .pathfinding import (
     is_doorway_glyph,
 )
 from .queries import (
+    find_altars,
     find_doors,
     find_items_on_map,
     find_stairs,
@@ -200,9 +201,9 @@ class NetHackAPI:
         level = self._dungeon_memory.get_level(dungeon_level, create=True)
         self._update_visible_walkable_tiles(level)
 
-    def _has_unreachable_areas(self) -> bool:
+    def _get_blocking_info(self) -> tuple[bool, str]:
         """
-        Check if there are areas we can see but can't reach.
+        Check if there are areas we can see but can't reach, and explain why.
 
         This detects when:
         1. There are closed doors we can't path to or open
@@ -212,10 +213,10 @@ class NetHackAPI:
         and "blocked" (visible areas exist but aren't reachable).
 
         Returns:
-            True if there are unreachable visible areas, False otherwise.
+            Tuple of (is_blocked, explanation_message)
         """
         if not self.observation:
-            return False
+            return (False, "")
 
         # Check 1: Are there closed doors we can't reach?
         doors = self.find_doors()
@@ -224,8 +225,12 @@ class NetHackAPI:
         if closed_doors:
             # There are closed doors visible but we couldn't open them
             # (either couldn't path to them, or they were locked)
-            logger.debug(f"_has_unreachable_areas: Found {len(closed_doors)} closed door(s) at {[d[0] for d in closed_doors]}")
-            return True
+            door_positions = [f"({d[0].x}, {d[0].y})" for d in closed_doors[:3]]
+            logger.debug(f"_get_blocking_info: Found {len(closed_doors)} closed door(s) at {[d[0] for d in closed_doors]}")
+            if len(closed_doors) == 1:
+                return (True, f"Blocked by closed door at {door_positions[0]}. Move adjacent and use open_door().")
+            else:
+                return (True, f"Blocked by {len(closed_doors)} closed doors at {', '.join(door_positions)}. Move adjacent and use open_door().")
 
         # Check 2: Are there visible floor tiles we haven't stepped on?
         # Get stepped memory for current level
@@ -253,10 +258,16 @@ class NetHackAPI:
                 break
 
         if unreachable_tiles:
-            logger.debug(f"_has_unreachable_areas: Found {len(unreachable_tiles)} unreachable walkable tile(s), e.g. {unreachable_tiles[:3]}")
-            return True
+            tile_positions = [f"({t.x}, {t.y})" for t in unreachable_tiles[:3]]
+            logger.debug(f"_get_blocking_info: Found {len(unreachable_tiles)} unreachable walkable tile(s), e.g. {unreachable_tiles[:3]}")
+            return (True, f"Visible areas at {', '.join(tile_positions)} are unreachable. Look for secret doors (search walls) or alternative paths.")
 
-        return False
+        return (False, "")
+
+    def _has_unreachable_areas(self) -> bool:
+        """Check if there are areas we can see but can't reach."""
+        is_blocked, _ = self._get_blocking_info()
+        return is_blocked
 
     def _try_open_nearest_closed_door(self) -> bool:
         """
@@ -602,11 +613,77 @@ class NetHackAPI:
             return []
         return get_items_at(self.observation, pos)
 
-    def get_items_here(self) -> list[Item]:
-        """Get items at player's current position."""
+    def get_items_here_glyphs(self) -> list[Item]:
+        """Get items at player's position using glyph data only (no commands sent).
+
+        Note: Returns empty when standing on items since the player glyph
+        obscures item glyphs. Use get_items_here() for reliable results.
+        """
         if not self.observation:
             return []
         return get_items_here(self.observation)
+
+    def get_items_here(self) -> list[Item]:
+        """
+        Get items at player's current position.
+
+        Uses the look command (:) which is a free action (costs no turns).
+        This is necessary because when standing on items, the player glyph
+        obscures the item glyph in the observation.
+        """
+        if not self._actions:
+            return []
+
+        pos = self.get_position()
+
+        # Send : (look) without prompt handling so we can read the screen
+        result = self._actions._execute_single(ord(":"), handle_prompts=False)
+        obs = self._env.last_observation
+        if not obs:
+            return []
+
+        items: list[Item] = []
+
+        # Case 1: Single item — appears in message buffer as "You see here a X."
+        msg = obs.get_message()
+        if "You see here" in msg:
+            # Extract item name from "You see here a/an <name>."
+            # Handle compound messages like "There is a staircase up here.  You see here a sword."
+            for part in msg.split("."):
+                part = part.strip()
+                if "You see here" in part:
+                    name = part.replace("You see here ", "").rstrip(".")
+                    # Strip leading article
+                    for article in ("a ", "an ", "the "):
+                        if name.startswith(article):
+                            name = name[len(article):]
+                            break
+                    items.append(Item(glyph=0, name=name, position=pos))
+
+        # Case 2: Multiple items — shown on TTY screen as "Things that are here:"
+        # followed by item lines, then "--More--"
+        elif obs.in_more_prompt:
+            screen_lines = obs.get_screen_lines()
+            in_list = False
+            for line in screen_lines:
+                stripped = line.strip()
+                if "Things that are here:" in stripped or "Things that you feel here:" in stripped:
+                    in_list = True
+                    continue
+                if in_list:
+                    if stripped == "--More--" or stripped == "":
+                        break
+                    name = stripped
+                    for article in ("a ", "an ", "the "):
+                        if name.startswith(article):
+                            name = name[len(article):]
+                            break
+                    items.append(Item(glyph=0, name=name, position=pos))
+
+        # Dismiss any remaining --More-- prompts so game state is clean
+        self._actions._handle_all_prompts()
+
+        return items
 
     def get_inventory(self) -> list[Item]:
         """Get current inventory."""
@@ -632,16 +709,41 @@ class NetHackAPI:
         return level.get_tile(pos)
 
     def find_stairs(self) -> tuple[Optional[Position], Optional[Position]]:
-        """Find stairs up and down positions."""
+        """
+        Find stairs up and down positions.
+
+        Uses both current observation AND level memory, so stairs are found
+        even if the player is standing on them (which hides the stair character).
+        """
         if not self.observation:
             return None, None
-        return find_stairs(self.observation)
+
+        # First check current observation
+        stairs_up, stairs_down = find_stairs(self.observation)
+
+        # If not found, check level memory (stairs may be hidden because player is on them)
+        if self._dungeon_memory:
+            dungeon_level = int(self.observation.blstats[12])  # BL_DEPTH
+            level = self._dungeon_memory.get_level(dungeon_level)
+            if level:
+                if stairs_up is None and level.upstairs_pos:
+                    stairs_up = Position(level.upstairs_pos[0], level.upstairs_pos[1])
+                if stairs_down is None and level.downstairs_pos:
+                    stairs_down = Position(level.downstairs_pos[0], level.downstairs_pos[1])
+
+        return stairs_up, stairs_down
 
     def find_doors(self) -> list[tuple[Position, bool]]:
         """Find all doors (position, is_open)."""
         if not self.observation:
             return []
         return find_doors(self.observation)
+
+    def find_altars(self) -> list[Position]:
+        """Find all altars on current level."""
+        if not self.observation:
+            return []
+        return find_altars(self.observation)
 
     # ==================== Actions ====================
 
@@ -657,11 +759,43 @@ class NetHackAPI:
             if msg and (not self._message_history or msg != self._message_history[-1]):
                 self._message_history.append(msg)
 
-    def move(self, direction: Direction) -> ActionResult:
-        """Move in a direction."""
+    def move(self, direction: Direction, count: int = 1) -> ActionResult:
+        """
+        Move in a direction.
+
+        Args:
+            direction: Direction to move (N, S, E, W, NE, NW, SE, SW)
+            count: Number of tiles to move (default 1). Higher counts use NetHack's
+                   count prefix (e.g., 5l) which auto-stops at walls/monsters.
+
+        Returns:
+            ActionResult indicating success/failure
+        """
         if not self._actions:
             return ActionResult.failure("Environment not initialized")
-        result = self._actions.move(direction)
+        result = self._actions.move(direction, count)
+        self._record_messages(result.messages)
+        if result.success:
+            self._mark_current_position_stepped()
+        return result
+
+    def run(self, direction: Direction) -> ActionResult:
+        """
+        Run in a direction until interrupted.
+
+        Runs until hitting a wall, reaching an intersection/doorway, seeing a monster,
+        or taking damage. Faster than move() for long corridors, and NetHack handles
+        all safety interrupts automatically.
+
+        Args:
+            direction: Direction to run (N, S, E, W, NE, NW, SE, SW)
+
+        Returns:
+            ActionResult indicating success/failure
+        """
+        if not self._actions:
+            return ActionResult.failure("Environment not initialized")
+        result = self._actions.run(direction)
         self._record_messages(result.messages)
         if result.success:
             self._mark_current_position_stepped()
@@ -672,7 +806,8 @@ class NetHackAPI:
         Move to a target position by pathfinding and following the path.
 
         This is a convenience method that combines find_path + move loop.
-        Stops early if movement fails (blocked, combat, etc.).
+        Stops early if movement fails (blocked, combat, etc.) or if the
+        player becomes hungry or drops below 30% HP during travel.
 
         If the target is unwalkable (monster, closed door, wall), automatically
         moves to the nearest adjacent tile instead.
@@ -708,21 +843,73 @@ class NetHackAPI:
             return ActionResult.failure(f"No path: {path_result.message}")
 
         # Follow the path
+        # Track hunger state to detect transitions (not-hungry→hungry, hungry→weak).
+        # We only interrupt on transitions, not on current state, so the agent
+        # can still use move_to() to walk to food while already hungry.
         all_messages = []
+        prev_hunger = None
+        if self.observation:
+            prev_hunger = get_stats(self.observation).hunger
+        prev_hp_frac = None
+        if self.observation:
+            s = get_stats(self.observation)
+            prev_hp_frac = s.hp / max(s.max_hp, 1)
+
         for direction in path_result:
             result = self.move(direction)
             all_messages.extend(result.messages)
 
             if not result.success:
-                # If we're adjacent to target, consider it success
-                # (we got as close as possible - target may be unwalkable)
-                if self.position.chebyshev_distance(target) == 1:
-                    return ActionResult(success=True, messages=all_messages, turn_elapsed=result.turn_elapsed)
-                return ActionResult(
-                    success=False,
-                    messages=all_messages,
-                    turn_elapsed=result.turn_elapsed,
-                )
+                # If move failed and we're passing through doors, try opening the door
+                if pass_through_doors:
+                    open_result = self.open_door(direction)
+                    all_messages.extend(open_result.messages)
+                    if open_result.success:
+                        # Door opened, retry the move
+                        result = self.move(direction)
+                        all_messages.extend(result.messages)
+
+                if not result.success:
+                    # If we're adjacent to target, consider it success
+                    # (we got as close as possible - target may be unwalkable)
+                    if self.position.chebyshev_distance(target) == 1:
+                        return ActionResult(success=True, messages=all_messages, turn_elapsed=result.turn_elapsed)
+                    return ActionResult(
+                        success=False,
+                        messages=all_messages,
+                        turn_elapsed=result.turn_elapsed,
+                    )
+
+            # Safety checks: interrupt on state TRANSITIONS, not current state.
+            # This prevents loot sweeps from starving the player while still
+            # allowing move_to() to work when already hungry (e.g. walking to food).
+            if self.observation:
+                stats = get_stats(self.observation)
+
+                # Hunger transition: not-hungry→hungry, or hungry→weak/fainting
+                from .models import HungerState
+                cur_hunger = stats.hunger
+                if prev_hunger is not None and cur_hunger != prev_hunger:
+                    worsened = (
+                        (prev_hunger == HungerState.NOT_HUNGRY and cur_hunger in (HungerState.HUNGRY, HungerState.WEAK, HungerState.FAINTING)) or
+                        (prev_hunger == HungerState.SATIATED and cur_hunger in (HungerState.HUNGRY, HungerState.WEAK, HungerState.FAINTING)) or
+                        (prev_hunger == HungerState.HUNGRY and cur_hunger in (HungerState.WEAK, HungerState.FAINTING)) or
+                        (prev_hunger == HungerState.WEAK and cur_hunger == HungerState.FAINTING)
+                    )
+                    if worsened:
+                        all_messages.append(f"Interrupted: hunger worsened to {cur_hunger.value} at {self.position}")
+                        logger.debug(f"move_to: hunger transition {prev_hunger.value}->{cur_hunger.value} at {self.position} (target was {target})")
+                        return ActionResult(success=False, messages=all_messages, turn_elapsed=True)
+                prev_hunger = cur_hunger
+
+                # HP transition: crossed below 30%
+                cur_hp_frac = stats.hp / max(stats.max_hp, 1)
+                if prev_hp_frac is not None and prev_hp_frac >= 0.3 and cur_hp_frac < 0.3:
+                    all_messages.append(f"Interrupted: HP dropped to {stats.hp}/{stats.max_hp} at {self.position}")
+                    logger.debug(f"move_to: HP transition {prev_hp_frac:.0%}->{cur_hp_frac:.0%} at {self.position} (target was {target})")
+                    return ActionResult(success=False, messages=all_messages, turn_elapsed=True)
+                prev_hp_frac = cur_hp_frac
+
             # Note: We don't interrupt for hostiles - agent made conscious decision to travel.
             # If a hostile blocks the path, the move() will fail naturally.
 
@@ -752,19 +939,37 @@ class NetHackAPI:
         self._record_messages(result.messages)
         return result
 
-    def wait(self) -> ActionResult:
-        """Wait one turn."""
+    def wait(self, count: int = 1) -> ActionResult:
+        """
+        Wait/rest in place.
+
+        Args:
+            count: Number of turns to wait (default 1). Uses NetHack's count prefix
+                   which auto-interrupts if a monster appears or attacks.
+
+        Returns:
+            ActionResult with messages from the wait period.
+        """
         if not self._actions:
             return ActionResult.failure("Environment not initialized")
-        result = self._actions.wait()
+        result = self._actions.wait(count)
         self._record_messages(result.messages)
         return result
 
-    def search(self) -> ActionResult:
-        """Search adjacent tiles."""
+    def search(self, count: int = 1) -> ActionResult:
+        """
+        Search adjacent tiles for secret doors and traps.
+
+        Args:
+            count: Number of times to search (default 1). Use count=20 to thoroughly
+                   search an area. NetHack auto-interrupts if a monster appears.
+
+        Returns:
+            ActionResult with messages (e.g., "You find a hidden door!")
+        """
         if not self._actions:
             return ActionResult.failure("Environment not initialized")
-        result = self._actions.search()
+        result = self._actions.search(count)
         self._record_messages(result.messages)
         return result
 
@@ -772,13 +977,15 @@ class NetHackAPI:
         """
         Pick up items from the ground.
 
+        With no arguments, picks up all items on the tile.
+        With a letter, picks up just that item from a multi-item pile.
+
         Args:
-            item_letter: If multiple items on ground, specify which to pick up (a, b, c...).
-                        If only one item, this can be omitted.
-                        If multiple items exist, pickup() without args will fail with a list.
+            item_letter: Pick up a specific item by its menu letter (a, b, c...).
+                        If omitted, picks up everything.
 
         Returns:
-            ActionResult - fails with item list if multiple items and no letter specified
+            ActionResult
         """
         if not self._actions:
             return ActionResult.failure("Environment not initialized")
@@ -871,6 +1078,14 @@ class NetHackAPI:
         if not self._actions:
             return ActionResult.failure("Environment not initialized")
         result = self._actions.go_down()
+        self._record_messages(result.messages)
+        return result
+
+    def pay(self) -> ActionResult:
+        """Pay a shopkeeper for items you've picked up."""
+        if not self._actions:
+            return ActionResult.failure("Environment not initialized")
+        result = self._actions.pay()
         self._record_messages(result.messages)
         return result
 
@@ -1303,7 +1518,8 @@ class NetHackAPI:
                             failed_attempts = 0
                             continue
                         # No doors to open - check if truly fully explored or just blocked
-                        if self._has_unreachable_areas():
+                        is_blocked, blocking_msg = self._get_blocking_info()
+                        if is_blocked:
                             # There ARE visible areas we can't reach
                             # Could be: closed door we can't path to, or disconnected area
                             return AutoexploreResult(
@@ -1311,7 +1527,7 @@ class NetHackAPI:
                                 steps_taken=steps_taken,
                                 turns_elapsed=self.turn - turns_start,
                                 position=self.position,
-                                message="Cannot reach visible areas - path may be blocked",
+                                message=blocking_msg,
                             )
                         else:
                             # Truly fully explored
@@ -1361,13 +1577,14 @@ class NetHackAPI:
                             break
                 if not moved:
                     # Can't move into unexplored - check if there are other visible unexplored areas
-                    if self._has_unreachable_areas():
+                    is_blocked, blocking_msg = self._get_blocking_info()
+                    if is_blocked:
                         return AutoexploreResult(
                             stop_reason="blocked",
                             steps_taken=steps_taken,
                             turns_elapsed=self.turn - turns_start,
                             position=self.position,
-                            message="Cannot reach visible areas - path may be blocked",
+                            message=blocking_msg,
                         )
                     else:
                         return AutoexploreResult(
@@ -1402,12 +1619,21 @@ class NetHackAPI:
 
                 if failed_attempts >= max_failed_attempts:
                     steps_msg = f" after {steps_taken} steps" if steps_taken > 0 else ""
+                    _, blocking_msg = self._get_blocking_info()
+                    if blocking_msg:
+                        return AutoexploreResult(
+                            stop_reason="blocked",
+                            steps_taken=steps_taken,
+                            turns_elapsed=self.turn - turns_start,
+                            position=self.position,
+                            message=blocking_msg,
+                        )
                     return AutoexploreResult(
                         stop_reason="blocked",
                         steps_taken=steps_taken,
                         turns_elapsed=self.turn - turns_start,
                         position=self.position,
-                        message=f"Too many pathfinding failures{steps_msg}",
+                        message=f"Too many pathfinding failures{steps_msg}. Try searching for secret doors or moving manually.",
                     )
                 continue
 
@@ -1486,12 +1712,21 @@ class NetHackAPI:
                     target_attempts += 1  # Track failures for current target
                     if failed_attempts >= max_failed_attempts:
                         steps_msg = f" after {steps_taken} steps" if steps_taken > 0 else ""
+                        _, blocking_msg = self._get_blocking_info()
+                        if blocking_msg:
+                            return AutoexploreResult(
+                                stop_reason="blocked",
+                                steps_taken=steps_taken,
+                                turns_elapsed=self.turn - turns_start,
+                                position=self.position,
+                                message=blocking_msg,
+                            )
                         return AutoexploreResult(
                             stop_reason="blocked",
                             steps_taken=steps_taken,
                             turns_elapsed=self.turn - turns_start,
                             position=self.position,
-                            message=f"Too many movement failures{steps_msg}",
+                            message=f"Too many movement failures{steps_msg}. Try searching for secret doors or moving manually.",
                         )
                     continue
 

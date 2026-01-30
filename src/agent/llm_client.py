@@ -18,30 +18,50 @@ logger = logging.getLogger(__name__)
 llm_logger = LLMLogger()
 
 
-# Core tool definitions (always available)
-CORE_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "execute_code",
-            "description": "Run Python code that interacts with the game. Use for ad-hoc commands like moving, fighting, picking up items. Batch multiple operations together.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "reasoning": {
-                        "type": "string",
-                        "description": "Brief explanation of what the code will do"
-                    },
-                    "code": {
-                        "type": "string",
-                        "description": "Python code to execute. Has access to 'nh' (game API) and Direction enum. All calls are synchronous - do NOT use await."
-                    }
+# Base tool - always available
+EXECUTE_CODE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "execute_code",
+        "description": "Run Python code that interacts with the game. Use for ad-hoc commands like moving, fighting, picking up items. Batch multiple operations together.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reasoning": {
+                    "type": "string",
+                    "description": "Brief explanation of what the code will do"
                 },
-                "required": ["reasoning", "code"]
-            }
+                "code": {
+                    "type": "string",
+                    "description": "Python code to execute. Has access to 'nh' (game API) and Direction enum. All calls are synchronous - do NOT use await."
+                }
+            },
+            "required": ["reasoning", "code"]
         }
-    },
-]
+    }
+}
+
+# View full map tool - only when local_map_mode is enabled
+VIEW_FULL_MAP_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "view_full_map",
+        "description": "View the ENTIRE dungeon level map (all 21 rows). Use ONLY when the local view is insufficient - e.g. to plan exploration routes, remember distant item locations, or understand overall level layout. Do NOT use every turn - it's expensive. The local view shown each turn is enough for tactical decisions.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reasoning": {
+                    "type": "string",
+                    "description": "Why you need the full map view right now"
+                }
+            },
+            "required": ["reasoning"]
+        }
+    }
+}
+
+# Core tools (for backward compatibility)
+CORE_TOOLS = [EXECUTE_CODE_TOOL, VIEW_FULL_MAP_TOOL]
 
 # Skill tool definitions (only when skills_enabled=True)
 SKILL_TOOLS = [
@@ -101,18 +121,27 @@ SKILL_TOOLS = [
 AGENT_TOOLS = CORE_TOOLS + SKILL_TOOLS
 
 
-def get_agent_tools(skills_enabled: bool = False) -> list[dict]:
+def get_agent_tools(skills_enabled: bool = False, local_map_mode: bool = False) -> list[dict]:
     """Get the list of tools based on configuration.
 
     Args:
         skills_enabled: Whether skill tools (write_skill, invoke_skill) are enabled
+        local_map_mode: Whether agent sees local map (True) or full map (False).
+                        view_full_map tool is only included when local_map_mode=True.
 
     Returns:
         List of tool definitions for the LLM
     """
+    tools = [EXECUTE_CODE_TOOL]
+
+    # Only include view_full_map when agent sees local map (needs way to see full)
+    if local_map_mode:
+        tools.append(VIEW_FULL_MAP_TOOL)
+
     if skills_enabled:
-        return AGENT_TOOLS
-    return CORE_TOOLS
+        tools.extend(SKILL_TOOLS)
+
+    return tools
 
 
 @dataclass

@@ -256,6 +256,7 @@ class Stats:
     alignment: Alignment
     dungeon_level: int
     dungeon_number: int  # Which branch
+    depth: int  # Absolute depth from surface (accounts for branch offsets)
     turn: int
     score: int
     position: Position

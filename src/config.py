@@ -55,10 +55,15 @@ class AgentConfig:
     # How many recent turns keep their full map (0 = only current turn has map)
     # Higher values give more spatial context but use more tokens
     maps_in_history: int = 1
+    # How many recent turns keep full tool call arguments (0 = unlimited)
+    # Older tool calls show just the tool name with "[compacted]" arguments
+    tool_calls_in_history: int = 0
     # Show inventory in context each turn (helps agent track items without querying)
     show_inventory: bool = True
     # Show adjacent tiles (N, S, E, W, etc.) with descriptions
     show_adjacent_tiles: bool = True
+    # Show items visible on the map with their coordinates (food, weapons, etc.)
+    show_items_on_map: bool = True
     # Local map mode: show only tiles around player with coordinate guides (LLM-optimized)
     local_map_mode: bool = False
     # Tiles in each direction from player (7 = 15x15 total view)

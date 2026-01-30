@@ -131,6 +131,13 @@ class LLMLogger:
         new_start = self._last_message_count
         self._last_message_count = len(messages)
 
+        # Find the last user message index (current turn with the map)
+        last_user_idx = None
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                last_user_idx = i
+                break
+
         for i, msg in enumerate(messages):
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
@@ -145,8 +152,9 @@ class LLMLogger:
                     self.logger.debug(f"  [system] {content[:1000]}...")
                     continue
 
-            # Skip already-logged messages (show count instead)
-            if i < new_start:
+            # Always log the last user message (current turn with map)
+            # Skip other already-logged messages
+            if i < new_start and i != last_user_idx:
                 continue
 
             # Log full content with proper formatting

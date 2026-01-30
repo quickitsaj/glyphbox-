@@ -22,6 +22,7 @@ OBSERVATION_KEYS = (
     "specials",  # 21x79 grid of special attributes
     "blstats",  # Bottom-line stats (HP, AC, etc.)
     "message",  # Game messages
+    "misc",  # Prompt state flags: [in_yn_function, in_getlin, xwaitforspace]
     "inv_glyphs",  # Inventory glyph IDs
     "inv_strs",  # Inventory item strings
     "inv_letters",  # Inventory slot letters
@@ -78,6 +79,12 @@ class Observation:
     # Messages
     message: bytes  # Raw message bytes
 
+    # Prompt state flags from NLE misc observation
+    # misc[0] = in_yn_function: game waiting for single char (y/n, menu letter)
+    # misc[1] = in_getlin: game waiting for text input (e.g., engrave text)
+    # misc[2] = xwaitforspace: game waiting for space/enter (--More--, menus)
+    misc: np.ndarray  # (3,) prompt state flags
+
     # Inventory
     inv_glyphs: np.ndarray
     inv_strs: np.ndarray
@@ -126,6 +133,26 @@ class Observation:
     def score(self) -> int:
         """Current score."""
         return int(self.blstats[BLSTAT_SCORE])
+
+    @property
+    def in_yn_prompt(self) -> bool:
+        """True if game is waiting for a single character response (y/n, menu letter)."""
+        return bool(self.misc[0])
+
+    @property
+    def in_getlin_prompt(self) -> bool:
+        """True if game is waiting for text input (e.g., engrave text, wish)."""
+        return bool(self.misc[1])
+
+    @property
+    def in_more_prompt(self) -> bool:
+        """True if game is waiting for space/enter to continue (--More--, menus)."""
+        return bool(self.misc[2])
+
+    @property
+    def in_any_prompt(self) -> bool:
+        """True if game is in any prompt state that requires input to continue."""
+        return self.in_yn_prompt or self.in_getlin_prompt or self.in_more_prompt
 
     def get_message(self) -> str:
         """Get decoded message string."""
@@ -188,6 +215,23 @@ class NLEWrapper:
         try:
             import nle  # noqa: F401 - needed for gym registration
 
+            # Custom options: disable autopickup so agent makes explicit pickup decisions
+            # Based on nle.nethack.NETHACKOPTIONS but with !autopickup
+            options = (
+                "!autopickup",  # Disable auto pickup - agent should decide what to pick up
+                "color",
+                "disclose:+i +a +v +g +c +o",
+                "mention_walls",
+                "nobones",
+                "nocmdassist",
+                "nolegacy",
+                "nosparkle",
+                "runmode:teleport",
+                "showexp",
+                "showscore",
+                "time",
+            )
+
             env = gym.make(
                 self.env_name,
                 observation_keys=OBSERVATION_KEYS,
@@ -195,6 +239,7 @@ class NLEWrapper:
                 allow_all_yn_questions=True,
                 allow_all_modes=True,
                 render_mode=self.render_mode,
+                options=options,
                 # Lawful Human Female Valkyrie - good "easy mode" starting option
                 character="val-hum-fem-law",
             )
@@ -212,6 +257,7 @@ class NLEWrapper:
             specials=obs["specials"],
             blstats=obs["blstats"],
             message=obs["message"],
+            misc=obs["misc"],
             inv_glyphs=obs["inv_glyphs"],
             inv_strs=obs["inv_strs"],
             inv_letters=obs["inv_letters"],

@@ -20,6 +20,7 @@ class ActionType(Enum):
     EXECUTE_CODE = "execute_code"  # Run ad-hoc code
     WRITE_SKILL = "write_skill"  # Save skill to library
     INVOKE_SKILL = "invoke_skill"  # Run saved skill
+    VIEW_FULL_MAP = "view_full_map"  # View entire dungeon level
     UNKNOWN = "unknown"
 
 
@@ -50,6 +51,9 @@ class AgentDecision:
 
         if self.action == ActionType.INVOKE_SKILL:
             return self.skill_name is not None
+
+        if self.action == ActionType.VIEW_FULL_MAP:
+            return True  # Just needs reasoning, which is always provided
 
         return False
 

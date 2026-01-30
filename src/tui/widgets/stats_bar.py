@@ -49,8 +49,8 @@ class StatsBar(Static):
         self._score = event.score
         self._hunger = event.hunger
         self._message = event.message
-        # Update BALROG progress (tracks highest achieved)
-        self._progress.update(self._level, self._xp_level)
+        # Update BALROG progress using absolute depth (not branch-relative level)
+        self._progress.update(event.depth, self._xp_level)
         self._refresh_display()
 
     def _refresh_display(self) -> None:
