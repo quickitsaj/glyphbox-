@@ -1,5 +1,7 @@
 # Glyphbox
 
+![Glyphbox](images/screenshot.png)
+
 A NetHack harness that exposes a Python sandbox as the primary interface for LLMs to play NetHack. The LLM receives the full game screen each turn and responds with Python code that executes against a high-level game API.
 
 ## How It Works
@@ -27,7 +29,7 @@ Each turn, the LLM sees the full 24x80 ASCII game screen, game messages, and res
 
 ```bash
 git clone <repo-url>
-cd nethack_agent
+cd glyphbox
 uv sync
 ```
 
@@ -36,9 +38,6 @@ Set an API key for your provider:
 ```bash
 # OpenRouter (default provider)
 export OPENROUTER_API_KEY="your-key"
-
-# Or Anthropic directly
-export ANTHROPIC_API_KEY="your-key"
 ```
 
 Verify the setup:
