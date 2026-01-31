@@ -399,10 +399,13 @@ class NetHackAgent:
             reminders = self._api.get_fired_reminders()
             notes = self._api.get_active_notes()
 
+        # Format last result text (before building the full prompt)
+        result_text = self.prompts.format_last_result(last_result) if last_result else None
+
         # Format prompt with game screen
         prompt = self.prompts.format_decision_prompt(
             saved_skills=saved_skills,
-            last_result=last_result,
+            last_result_text=result_text,
             game_screen=game_screen,
             current_position=current_position,
             hostile_monsters=hostile_monsters,
@@ -427,8 +430,13 @@ class NetHackAgent:
             system=system,
         )
 
-        # Store full message in conversation history
-        self._conversation.append({"role": "user", "content": prompt})
+        # Store full message in conversation history with metadata for compression
+        self._conversation.append({
+            "role": "user",
+            "content": prompt,
+            "_game_screen": game_screen,
+            "_last_result_text": result_text or "None",
+        })
         if response.tool_call:
             # Store the full tool call as assistant message
             tool_content = json.dumps({
@@ -503,20 +511,24 @@ class NetHackAgent:
                 msgs_from_end = num_user_msgs - user_msg_counter
                 user_msg_counter += 1
 
+                last_result_text = msg.get("_last_result_text", "")
+                if not last_result_text:
+                    # No metadata (shouldn't happen), skip
+                    continue
+
                 if msgs_from_end <= keep_map_count:
-                    # Keep full content for recent messages (preserves map)
-                    # But mark it as historical so agent knows it's not current
-                    content = msg.get("content", "")
-                    content = content.replace(
-                        "=== CURRENT GAME VIEW ===",
-                        f"=== HISTORICAL GAME VIEW ({msgs_from_end} turn(s) ago) ==="
+                    # Recent turn: include game screen but mark as historical
+                    game_screen = msg.get("_game_screen", "")
+                    content = self.prompts.format_historical_turn(
+                        game_screen=game_screen,
+                        last_result_text=last_result_text,
+                        turns_ago=msgs_from_end,
                     )
                     messages.append({"role": "user", "content": content})
                 else:
-                    # Compress older messages (strips map, keeps Last Result)
-                    compressed = self._compress_user_message(msg)
-                    if compressed:
-                        messages.append(compressed)
+                    # Old turn: just the result, no map
+                    content = self.prompts.format_past_turn(last_result_text)
+                    messages.append({"role": "user", "content": content})
             elif role == "assistant":
                 # Count from end: if this is one of the last `keep_tool_call_count` assistant msgs, keep full
                 msgs_from_end = num_assistant_msgs - assistant_msg_counter
@@ -533,25 +545,6 @@ class NetHackAgent:
         # Add current prompt with full content (map + state + last_result)
         messages.append({"role": "user", "content": current_prompt})
         return messages
-
-    def _compress_user_message(self, msg: dict) -> dict | None:
-        """
-        Compress a user message to just the last_result section.
-
-        Strips: game screen, game state, recent events
-        Keeps: last_result (critical feedback from previous action)
-        """
-        content = msg.get("content", "")
-
-        # Extract Last Result section
-        last_result_marker = "Last Result:"
-        if last_result_marker in content:
-            idx = content.index(last_result_marker)
-            last_result_section = content[idx:].strip()
-            return {"role": "user", "content": f"[Previous turn]\n{last_result_section}"}
-
-        # No last_result found, skip this message entirely
-        return None
 
     def _compress_assistant_message(self, msg: dict, compact_arguments: bool = False) -> dict | None:
         """

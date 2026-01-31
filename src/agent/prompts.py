@@ -68,6 +68,8 @@ class PromptManager:
         self._templates = {
             "system": system_prompt,
             "decision": DECISION_PROMPT,
+            "past_turn": PAST_TURN_PROMPT,
+            "historical_turn": HISTORICAL_TURN_PROMPT,
             "skill_creation": SKILL_CREATION_PROMPT,
             "analysis": ANALYSIS_PROMPT,
         }
@@ -98,10 +100,128 @@ class PromptManager:
         """Get the system prompt for the agent."""
         return self._templates.get("system", "")
 
+    def format_last_result(self, last_result: dict) -> str:
+        """
+        Format a last_result dict into display text.
+
+        Args:
+            last_result: Result dict from tool execution
+
+        Returns:
+            Formatted result text string
+        """
+        result_lines = []
+
+        # Show error if any
+        if last_result.get("error"):
+            result_lines.append(f"error: {last_result['error']}")
+
+        # Show game messages (raw feedback from the game)
+        # Deduplicate repeated messages with counts
+        messages = last_result.get("messages", [])
+        if messages:
+            result_lines.append("game_messages:")
+            deduped = _deduplicate_with_counts(messages)
+            for msg, count in deduped:
+                if count > 1:
+                    result_lines.append(f"  - {msg} (x{count})")
+                else:
+                    result_lines.append(f"  - {msg}")
+
+        # Show autoexplore result if autoexplore was called
+        autoexplore = last_result.get("autoexplore_result")
+        if autoexplore:
+            stop_reason = autoexplore.get("stop_reason", "unknown")
+            steps = autoexplore.get("steps_taken", 0)
+            message = autoexplore.get("message", "")
+            # Include message for blocked/informative stop reasons
+            if message and stop_reason in ("blocked", "fully_explored", "hostile"):
+                result_lines.append(f"autoexplore: stopped ({stop_reason}) after {steps} steps - {message}")
+            else:
+                result_lines.append(f"autoexplore: stopped ({stop_reason}) after {steps} steps")
+
+        # Show ALL API calls with success/failure status
+        # This ensures the agent always knows what actions were taken
+        api_calls = last_result.get("api_calls", [])
+        # Fall back to failed_api_calls for backward compatibility
+        if not api_calls:
+            api_calls = last_result.get("failed_api_calls", [])
+
+        if api_calls:
+            result_lines.append("actions:")
+            # Convert to strings for deduplication
+            call_strs = []
+            for c in api_calls:
+                method = c.get('method', 'unknown')
+                args = c.get('args', '')
+                success = c.get('success', True)
+                error = c.get('error', '')
+
+                # Format: method(args) ✓ or method(args) ✗ error
+                if args:
+                    call_str = f"{method}({args})"
+                else:
+                    call_str = f"{method}()"
+
+                if success:
+                    call_strs.append(f"{call_str} ok")
+                else:
+                    call_strs.append(f"{call_str} FAILED: {error}")
+
+            deduped = _deduplicate_with_counts(call_strs)
+            for call_msg, count in deduped:
+                if count > 1:
+                    result_lines.append(f"  - {call_msg} (x{count})")
+                else:
+                    result_lines.append(f"  - {call_msg}")
+
+        # Show output if present
+        if last_result.get("output"):
+            result_lines.append(f"output: {last_result['output']}")
+
+        # Show full map if view_full_map was called
+        if last_result.get("full_map"):
+            result_lines.append("=== FULL DUNGEON MAP ===")
+            result_lines.append(last_result["full_map"])
+            result_lines.append("=== END FULL MAP ===")
+
+        return "\n".join(result_lines) if result_lines else "None"
+
+    def format_past_turn(self, last_result_text: str) -> str:
+        """
+        Format a compressed past-turn message (no game screen).
+
+        Args:
+            last_result_text: Pre-formatted result text
+
+        Returns:
+            Formatted past-turn prompt
+        """
+        return self.format_template("past_turn", last_result=last_result_text)
+
+    def format_historical_turn(self, game_screen: str, last_result_text: str, turns_ago: int) -> str:
+        """
+        Format a historical turn message (includes game screen but no stale metadata).
+
+        Args:
+            game_screen: The game screen from that turn
+            last_result_text: Pre-formatted result text
+            turns_ago: How many turns ago this was
+
+        Returns:
+            Formatted historical-turn prompt
+        """
+        return self.format_template(
+            "historical_turn",
+            game_screen=game_screen,
+            last_result=last_result_text,
+            turns_ago=turns_ago,
+        )
+
     def format_decision_prompt(
         self,
         saved_skills: list[str],
-        last_result: Optional[dict] = None,
+        last_result_text: Optional[str] = None,
         game_screen: Optional[str] = None,
         current_position: Optional[Any] = None,
         hostile_monsters: Optional[list[Any]] = None,
@@ -118,7 +238,7 @@ class PromptManager:
 
         Args:
             saved_skills: List of skill names the agent has written
-            last_result: Result of the last tool execution
+            last_result_text: Pre-formatted result text from format_last_result()
             game_screen: Full game screen (ASCII art showing what human would see)
             current_position: Current player Position (x, y)
             hostile_monsters: List of hostile Monster objects
@@ -141,86 +261,7 @@ class PromptManager:
             else:
                 skills_text = "None (use write_skill to create skills)"
 
-        # Format last result
-        if last_result:
-            result_lines = []
-
-            # Show error if any
-            if last_result.get("error"):
-                result_lines.append(f"error: {last_result['error']}")
-
-            # Show game messages (raw feedback from the game)
-            # Deduplicate repeated messages with counts
-            messages = last_result.get("messages", [])
-            if messages:
-                result_lines.append("game_messages:")
-                deduped = _deduplicate_with_counts(messages)
-                for msg, count in deduped:
-                    if count > 1:
-                        result_lines.append(f"  - {msg} (x{count})")
-                    else:
-                        result_lines.append(f"  - {msg}")
-
-            # Show autoexplore result if autoexplore was called
-            autoexplore = last_result.get("autoexplore_result")
-            if autoexplore:
-                stop_reason = autoexplore.get("stop_reason", "unknown")
-                steps = autoexplore.get("steps_taken", 0)
-                message = autoexplore.get("message", "")
-                # Include message for blocked/informative stop reasons
-                if message and stop_reason in ("blocked", "fully_explored", "hostile"):
-                    result_lines.append(f"autoexplore: stopped ({stop_reason}) after {steps} steps - {message}")
-                else:
-                    result_lines.append(f"autoexplore: stopped ({stop_reason}) after {steps} steps")
-
-            # Show ALL API calls with success/failure status
-            # This ensures the agent always knows what actions were taken
-            api_calls = last_result.get("api_calls", [])
-            # Fall back to failed_api_calls for backward compatibility
-            if not api_calls:
-                api_calls = last_result.get("failed_api_calls", [])
-
-            if api_calls:
-                result_lines.append("actions:")
-                # Convert to strings for deduplication
-                call_strs = []
-                for c in api_calls:
-                    method = c.get('method', 'unknown')
-                    args = c.get('args', '')
-                    success = c.get('success', True)
-                    error = c.get('error', '')
-
-                    # Format: method(args) ✓ or method(args) ✗ error
-                    if args:
-                        call_str = f"{method}({args})"
-                    else:
-                        call_str = f"{method}()"
-
-                    if success:
-                        call_strs.append(f"{call_str} ok")
-                    else:
-                        call_strs.append(f"{call_str} FAILED: {error}")
-
-                deduped = _deduplicate_with_counts(call_strs)
-                for call_msg, count in deduped:
-                    if count > 1:
-                        result_lines.append(f"  - {call_msg} (x{count})")
-                    else:
-                        result_lines.append(f"  - {call_msg}")
-
-            # Show output if present
-            if last_result.get("output"):
-                result_lines.append(f"output: {last_result['output']}")
-
-            # Show full map if view_full_map was called
-            if last_result.get("full_map"):
-                result_lines.append("=== FULL DUNGEON MAP ===")
-                result_lines.append(last_result["full_map"])
-                result_lines.append("=== END FULL MAP ===")
-
-            result_text = "\n".join(result_lines) if result_lines else "None"
-        else:
-            result_text = "None"
+        result_text = last_result_text if last_result_text else "None"
 
         # Format hostile monsters with relative directions only (no coordinates)
         # Include the display character so agent knows what to look for on map
@@ -633,7 +674,7 @@ You must engage in strategic, long-term planning to survive.
 - Pick up food if you don't have enough. Even if not hungry, you should plan ahead and have enough food for later.
 - Focus on leveling up and getting stronger. Don't just rush headlong into the next level of the dungeon; if you do, you will be too weak and will die.
 - Generally speaking, corpses are only safe to eat if you've just killed them. Otherwise they will be rotted and give you food poisoning, resulting in certain death. One exception is Lichen corpses which are always safe to eat. If you are fainting and have no other option, prefer prayer as a last resort.
-- If you find yourself on a fully explored level with no staircase down, think critically about where the most likely location of the hidden room may be. Search along the walls and corridors leading to the map position you believe this room is most likely around.
+- If you find yourself on a fully explored level with no staircase down, think critically about where the most likely location of the hidden room may be. Search along the walls and corridors leading to the map position you believe this room is most likely around. Do not continue to use autoexplore in this scenario.
 - NetHack is a permadeath game. If you fail, you will not have a chance to recover. You MUST think critically and plan ahead.
 """
 
@@ -652,7 +693,17 @@ DECISION_PROMPT = """=== CURRENT GAME VIEW ===
 Last Result:
 {last_result}
 
-Study the map. What do you observe, and what action will you take?"""
+What action will you take?"""
+
+PAST_TURN_PROMPT = """[Previous turn]
+Last Result:
+{last_result}"""
+
+HISTORICAL_TURN_PROMPT = """=== HISTORICAL GAME VIEW ({turns_ago} turn(s) ago) ===
+{game_screen}
+
+Last Result:
+{last_result}"""
 
 SKILL_CREATION_PROMPT = """You need to create a new skill to handle this situation:
 

@@ -6,7 +6,7 @@ agent:
   # LLM provider: "openrouter" or "anthropic"
   provider: "openrouter"
   # LLM model to use for strategic decisions (OpenRouter format)
-  model: "openai/gpt-5.2"
+  model: "anthropic/claude-opus-4.5"
   # OpenRouter base URL
   base_url: "https://openrouter.ai/api/v1"
   # Temperature for LLM sampling (0.0 = deterministic, 1.0 = creative)

@@ -113,7 +113,8 @@ for d in [Direction.N, Direction.S, Direction.E, Direction.W, Direction.NE, Dire
         if result.stdout:
             last_result["output"] = result.stdout
 
-        prompt = pm.format_decision_prompt(saved_skills=[], last_result=last_result)
+        result_text = pm.format_last_result(last_result)
+        prompt = pm.format_decision_prompt(saved_skills=[], last_result_text=result_text)
         idx = prompt.find("Last Result:")
         last_result_section = prompt[idx:prompt.find("\n\nStudy")] if idx >= 0 else "NOT FOUND"
 
@@ -162,7 +163,8 @@ nh.wait()
             "api_calls": api_calls,  # Use new field
         }
 
-        prompt = pm.format_decision_prompt(saved_skills=[], last_result=last_result)
+        result_text = pm.format_last_result(last_result)
+        prompt = pm.format_decision_prompt(saved_skills=[], last_result_text=result_text)
         idx = prompt.find("Last Result:")
         end_idx = prompt.find("\n\nStudy")
         last_result_section = prompt[idx:end_idx] if idx >= 0 and end_idx >= 0 else prompt[idx:]
@@ -298,9 +300,10 @@ nh.move(Direction.N)
             last_result["output"] = result.stdout
 
         # Format the prompt like agent does
+        result_text = pm.format_last_result(last_result)
         prompt = pm.format_decision_prompt(
             saved_skills=[],
-            last_result=last_result,
+            last_result_text=result_text,
         )
 
         # Extract just the Last Result section

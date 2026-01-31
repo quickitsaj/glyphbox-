@@ -218,22 +218,7 @@ class NetHackAPI:
         if not self.observation:
             return (False, "")
 
-        # Check 1: Are there closed doors we can't reach?
-        doors = self.find_doors()
-        closed_doors = [(pos, is_open) for pos, is_open in doors if not is_open]
-
-        if closed_doors:
-            # There are closed doors visible but we couldn't open them
-            # (either couldn't path to them, or they were locked)
-            door_positions = [f"({d[0].x}, {d[0].y})" for d in closed_doors[:3]]
-            logger.debug(f"_get_blocking_info: Found {len(closed_doors)} closed door(s) at {[d[0] for d in closed_doors]}")
-            if len(closed_doors) == 1:
-                return (True, f"Blocked by closed door at {door_positions[0]}. Move adjacent and use open_door().")
-            else:
-                return (True, f"Blocked by {len(closed_doors)} closed doors at {', '.join(door_positions)}. Move adjacent and use open_door().")
-
-        # Check 2: Are there visible floor tiles we haven't stepped on?
-        # Get stepped memory for current level
+        # Are there visible floor tiles we haven't stepped on and can't reach?
         dungeon_level = int(self.observation.blstats[12])
         stepped_memory = self._dungeon_memory.get_level(dungeon_level, create=True)
         level = self.get_current_level()
@@ -260,7 +245,7 @@ class NetHackAPI:
         if unreachable_tiles:
             tile_positions = [f"({t.x}, {t.y})" for t in unreachable_tiles[:3]]
             logger.debug(f"_get_blocking_info: Found {len(unreachable_tiles)} unreachable walkable tile(s), e.g. {unreachable_tiles[:3]}")
-            return (True, f"Visible areas at {', '.join(tile_positions)} are unreachable. Look for secret doors (search walls) or alternative paths.")
+            return (True, f"Visible areas at {', '.join(tile_positions)} are unreachable.")
 
         return (False, "")
 

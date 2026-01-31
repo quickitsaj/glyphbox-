@@ -39,7 +39,7 @@ class TestPromptManager:
         """Test formatting decision prompt with minimal data (no skills)."""
         prompt = self.manager.format_decision_prompt(
             saved_skills=[],
-            last_result=None,
+            last_result_text=None,
         )
         assert isinstance(prompt, str)
         # When skills disabled, no "Saved Skills" section
@@ -49,7 +49,7 @@ class TestPromptManager:
         """Test formatting decision prompt with skills enabled."""
         prompt = self.manager_with_skills.format_decision_prompt(
             saved_skills=[],
-            last_result=None,
+            last_result_text=None,
         )
         assert isinstance(prompt, str)
         assert "Saved Skills" in prompt
@@ -59,7 +59,7 @@ class TestPromptManager:
         saved_skills = ["explore_corridor", "fight_adjacent"]
         prompt = self.manager_with_skills.format_decision_prompt(
             saved_skills=saved_skills,
-            last_result=None,
+            last_result_text=None,
         )
         assert "explore_corridor" in prompt
         assert "fight_adjacent" in prompt
@@ -70,9 +70,10 @@ class TestPromptManager:
             "tool": "execute_code",
             "messages": ["You move east.", "The door opens."],
         }
+        result_text = self.manager.format_last_result(last_result)
         prompt = self.manager.format_decision_prompt(
             saved_skills=[],
-            last_result=last_result,
+            last_result_text=result_text,
         )
         assert "You move east" in prompt
         assert "The door opens" in prompt
@@ -87,7 +88,7 @@ class TestPromptManager:
 """
         prompt = self.manager.format_decision_prompt(
             saved_skills=[],
-            last_result=None,
+            last_result_text=None,
             game_screen=game_screen,
         )
         assert "@" in prompt
@@ -164,7 +165,7 @@ class TestPromptFormatting:
         """Test that decision prompt contains game view section."""
         prompt = self.manager.format_decision_prompt(
             saved_skills=[],
-            last_result=None,
+            last_result_text=None,
         )
         assert "CURRENT GAME VIEW" in prompt
 
@@ -180,9 +181,10 @@ class TestPromptFormatting:
 
     def test_prompts_are_reasonable_length(self):
         """Test that prompts aren't excessively long."""
+        result_text = self.manager_with_skills.format_last_result({"success": True, "hint": "All good"})
         decision_prompt = self.manager_with_skills.format_decision_prompt(
             saved_skills=[f"skill_{i}" for i in range(10)],
-            last_result={"success": True, "hint": "All good"},
+            last_result_text=result_text,
         )
         # Should be under 10k characters for reasonable token usage
         assert len(decision_prompt) < 10000
@@ -200,7 +202,7 @@ class TestEdgeCases:
         """Test with all empty inputs."""
         prompt = self.manager.format_decision_prompt(
             saved_skills=[],
-            last_result=None,
+            last_result_text=None,
         )
         assert isinstance(prompt, str)
         assert len(prompt) > 0
@@ -210,7 +212,7 @@ class TestEdgeCases:
         saved_skills = ["skill_with_underscore", "skill-with-dash"]
         prompt = self.manager_with_skills.format_decision_prompt(
             saved_skills=saved_skills,
-            last_result=None,
+            last_result_text=None,
         )
         # Should not crash and should contain the content
         assert "skill_with_underscore" in prompt
