@@ -5,7 +5,7 @@ Manages prompt templates and context formatting for LLM interactions.
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class PromptManager:
             "analysis": ANALYSIS_PROMPT,
         }
 
-    def get_template(self, name: str) -> Optional[str]:
+    def get_template(self, name: str) -> str | None:
         """Get a template by name."""
         return self._templates.get(name)
 
@@ -221,17 +221,18 @@ class PromptManager:
     def format_decision_prompt(
         self,
         saved_skills: list[str],
-        last_result_text: Optional[str] = None,
-        game_screen: Optional[str] = None,
-        current_position: Optional[Any] = None,
-        hostile_monsters: Optional[list[Any]] = None,
-        adjacent_tiles: Optional[dict[str, str]] = None,
-        inventory: Optional[list[Any]] = None,
-        items_on_map: Optional[list[Any]] = None,
-        stairs_positions: Optional[tuple[Any, Any]] = None,
-        altars: Optional[list[Any]] = None,
-        reminders: Optional[list[str]] = None,
-        notes: Optional[list[tuple[int, str]]] = None,
+        last_result_text: str | None = None,
+        game_screen: str | None = None,
+        current_position: Any | None = None,
+        hostile_monsters: list[Any] | None = None,
+        adjacent_tiles: dict[str, str] | None = None,
+        inventory: list[Any] | None = None,
+        items_on_map: list[Any] | None = None,
+        stairs_positions: tuple[Any, Any] | None = None,
+        altars: list[Any] | None = None,
+        reminders: list[str] | None = None,
+        notes: list[tuple[int, str]] | None = None,
+        exploration_info: dict[str, Any] | None = None,
     ) -> str:
         """
         Format a decision prompt with current game context.
@@ -248,6 +249,11 @@ class PromptManager:
             stairs_positions: Tuple of (stairs_up_position, stairs_down_position)
             reminders: List of reminder messages that just fired
             notes: List of (note_id, message) tuples for active notes
+            exploration_info: Dict with exploration stats:
+                - explored_pct: float (0.0-1.0) exploration percentage
+                - frontier_count: int - number of reachable unexplored tiles
+                - stairs_down_distance: int - path distance to stairs down (-1 if unreachable)
+                - stairs_up_distance: int - path distance to stairs up (-1 if unreachable)
 
         Returns:
             Formatted decision prompt
@@ -356,6 +362,34 @@ class PromptManager:
                 note_lines.append(f"  {note_id}. {msg}")
             notes_text = "\n".join(note_lines)
 
+        # Format exploration info (spatial reasoning context)
+        exploration_text = ""
+        if exploration_info:
+            exp_lines = ["Exploration:"]
+            try:
+                explored_pct = float(exploration_info.get("explored_pct", 0) or 0)
+                frontier_count = int(exploration_info.get("frontier_count", 0) or 0)
+                stairs_down_dist = int(exploration_info.get("stairs_down_distance", -1) or -1)
+                stairs_up_dist = int(exploration_info.get("stairs_up_distance", -1) or -1)
+
+                exp_lines.append(f"  - Level explored: {explored_pct:.0%}")
+                exp_lines.append(f"  - Unexplored tiles reachable: {frontier_count}")
+
+                if stairs_down_dist >= 0:
+                    exp_lines.append(f"  - Path to stairs down: {stairs_down_dist} steps")
+                elif stairs_positions and len(stairs_positions) == 2 and stairs_positions[1]:
+                    exp_lines.append("  - Path to stairs down: blocked/unreachable")
+
+                if stairs_up_dist >= 0:
+                    exp_lines.append(f"  - Path to stairs up: {stairs_up_dist} steps")
+                elif stairs_positions and len(stairs_positions) == 2 and stairs_positions[0]:
+                    exp_lines.append("  - Path to stairs up: blocked/unreachable")
+
+                exploration_text = "\n".join(exp_lines)
+            except (TypeError, ValueError):
+                # Skip exploration info if values can't be converted
+                pass
+
         kwargs = {
             "game_screen": game_screen or "Screen not available",
             "position": position_text,
@@ -366,6 +400,7 @@ class PromptManager:
             "items_on_map": items_on_map_text,
             "stairs": stairs_text,
             "altars": altars_text,
+            "exploration": exploration_text,
             "skills_section": skills_section,
             "reminders": reminders_text,
             "notes": notes_text,
@@ -378,7 +413,7 @@ class PromptManager:
         situation: str,
         game_state: dict,
         existing_skills: list[str],
-        failed_attempts: Optional[list[str]] = None,
+        failed_attempts: list[str] | None = None,
     ) -> str:
         """
         Format a prompt for skill creation.
@@ -687,6 +722,7 @@ DECISION_PROMPT = """=== CURRENT GAME VIEW ===
 {items_on_map}
 {stairs}
 {altars}
+{exploration}
 {reminders}
 {notes}
 {skills_section}

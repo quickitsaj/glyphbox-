@@ -6,18 +6,17 @@ combining environment management, state queries, actions, and pathfinding.
 """
 
 import logging
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from src.memory.dungeon import DungeonMemory, LevelMemory
 
 from .actions import ActionExecutor
 from .environment import NLEWrapper, Observation
 from .models import (
-    ALL_DIRECTIONS,
-    ActionResult,
-    AutoexploreResult,
     CARDINAL_DIRECTIONS,
     DIAGONAL_DIRECTIONS,
+    ActionResult,
+    AutoexploreResult,
     Direction,
     DungeonLevel,
     Item,
@@ -53,11 +52,11 @@ from .queries import (
     get_stats,
     get_visible_monsters,
     get_weapons_in_inventory,
+    in_sokoban,
     # Player condition checks
     is_blind,
     is_confused,
     is_stunned,
-    in_sokoban,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,8 +87,8 @@ class NetHackAPI:
         self,
         env_name: str = "NetHackChallenge-v0",
         max_episode_steps: int = 1_000_000,
-        render_mode: Optional[str] = None,
-        dungeon_memory: Optional[DungeonMemory] = None,
+        render_mode: str | None = None,
+        dungeon_memory: DungeonMemory | None = None,
     ):
         """
         Initialize the NetHack API.
@@ -105,7 +104,7 @@ class NetHackAPI:
             max_episode_steps=max_episode_steps,
             render_mode=render_mode,
         )
-        self._actions: Optional[ActionExecutor] = None
+        self._actions: ActionExecutor | None = None
         self._last_prayer_turn = 0
         self._message_history: list[str] = []
         self._dungeon_memory = dungeon_memory or DungeonMemory()
@@ -168,8 +167,9 @@ class NetHackAPI:
         if not self.observation:
             return
 
-        from .glyphs import is_walkable_glyph
         from nle import nethack
+
+        from .glyphs import is_walkable_glyph
 
         for y in range(21):
             for x in range(79):
@@ -342,7 +342,7 @@ class NetHackAPI:
     # ==================== Properties ====================
 
     @property
-    def observation(self) -> Optional[Observation]:
+    def observation(self) -> Observation | None:
         """Get the current observation."""
         return self._env.last_observation
 
@@ -546,7 +546,7 @@ class NetHackAPI:
         if not self.observation:
             return {}
 
-        from .glyphs import parse_glyph, GlyphType
+        from .glyphs import GlyphType, parse_glyph
 
         pos = self.position
         obs = self.observation
@@ -688,12 +688,12 @@ class NetHackAPI:
             return []
         return get_weapons_in_inventory(self.observation)
 
-    def get_tile(self, pos: Position) -> Optional[Tile]:
+    def get_tile(self, pos: Position) -> Tile | None:
         """Get tile at a position."""
         level = self.get_current_level()
         return level.get_tile(pos)
 
-    def find_stairs(self) -> tuple[Optional[Position], Optional[Position]]:
+    def find_stairs(self) -> tuple[Position | None, Position | None]:
         """
         Find stairs up and down positions.
 
@@ -958,7 +958,7 @@ class NetHackAPI:
         self._record_messages(result.messages)
         return result
 
-    def pickup(self, item_letter: Optional[str] = None) -> ActionResult:
+    def pickup(self, item_letter: str | None = None) -> ActionResult:
         """
         Pick up items from the ground.
 
@@ -986,7 +986,7 @@ class NetHackAPI:
         self._record_messages(result.messages)
         return result
 
-    def eat(self, item_letter: Optional[str] = None) -> ActionResult:
+    def eat(self, item_letter: str | None = None) -> ActionResult:
         """Eat food."""
         if not self._actions:
             return ActionResult.failure("Environment not initialized")
@@ -1132,7 +1132,7 @@ class NetHackAPI:
         self._record_messages(result.messages)
         return result
 
-    def cast_spell(self, spell_letter: str, direction: Optional[Direction] = None) -> ActionResult:
+    def cast_spell(self, spell_letter: str, direction: Direction | None = None) -> ActionResult:
         """Cast a memorized spell."""
         if not self._actions:
             return ActionResult.failure("Environment not initialized")
@@ -1198,7 +1198,7 @@ class NetHackAPI:
         avoid_monsters: bool = True,
         avoid_traps: bool = True,
         allow_with_hostiles: bool = False,
-        cardinal_only: Optional[bool] = None,
+        cardinal_only: bool | None = None,
         pass_through_doors: bool = False,
     ) -> PathResult:
         """
@@ -1222,7 +1222,7 @@ class NetHackAPI:
         self,
         target: Position,
         allow_with_hostiles: bool = False,
-    ) -> Optional[PathResult]:
+    ) -> PathResult | None:
         """
         Find the best path to a tile adjacent to the target.
 
@@ -1271,7 +1271,7 @@ class NetHackAPI:
         self,
         predicate: Callable[[Tile], bool],
         max_distance: int = 100,
-    ) -> Optional[Position]:
+    ) -> Position | None:
         """Find nearest tile matching a predicate."""
         if not self.observation:
             return None
@@ -1280,7 +1280,7 @@ class NetHackAPI:
     def find_unexplored(
         self,
         allow_with_hostiles: bool = False,
-        excluded_positions: Optional[set[Position]] = None,
+        excluded_positions: set[Position] | None = None,
     ) -> TargetResult:
         """
         Find best unexplored tile using NetHack4's algorithm.
@@ -1385,7 +1385,7 @@ class NetHackAPI:
         # Target stickiness: once we pick a target, continue toward it until we
         # reach it or it becomes invalid. This prevents oscillation where we keep
         # switching between two targets that trade places as "best" based on position.
-        current_target: Optional[Position] = None
+        current_target: Position | None = None
         target_attempts = 0  # Consecutive failed attempts to reach current target
         max_target_attempts = 5  # Pick new target after this many failures
         # Track recently abandoned targets to avoid re-selecting them immediately.
@@ -1793,6 +1793,186 @@ class NetHackAPI:
 
         # None of the candidates were reachable
         return ActionResult.failure(f"Found '{char}' but cannot reach it: {last_failure_reason}")
+
+    def get_explored_percentage(self) -> float:
+        """
+        Get the exploration percentage for the current dungeon level.
+
+        This helps the agent decide when a level is sufficiently explored
+        to descend to the next level.
+
+        Returns:
+            Float between 0.0 and 1.0 representing exploration progress.
+            Based on stepped tiles vs estimated explorable area.
+        """
+        if not self.observation:
+            return 0.0
+
+        dungeon_level = int(self.observation.blstats[12])  # BL_DEPTH
+        level_memory = self._dungeon_memory.get_level(dungeon_level)
+        if not level_memory:
+            return 0.0
+
+        # Count tiles we've actually stepped on
+        stepped_count = sum(
+            1 for y in range(21) for x in range(79)
+            if level_memory.is_stepped(x, y)
+        )
+
+        # Count tiles we've seen as walkable (explored but not necessarily stepped)
+        seen_walkable_count = sum(
+            1 for y in range(21) for x in range(79)
+            if level_memory.is_seen_walkable(x, y)
+        )
+
+        # Use the larger of the two as our exploration metric
+        explored_count = max(stepped_count, seen_walkable_count)
+
+        if explored_count == 0:
+            return 0.0
+
+        # Estimate total explorable area - typical NetHack level has ~200-400 walkable tiles
+        # We use a conservative estimate based on observed walkable tiles
+        # A well-explored level typically has 250-350 stepped tiles
+        estimated_total = max(250, explored_count * 1.2)  # Assume at least 20% more to explore
+
+        return min(1.0, explored_count / estimated_total)
+
+    def get_frontier_tile_count(self) -> int:
+        """
+        Count the number of unexplored tiles that are reachable from current position.
+
+        This helps the agent understand how much exploration remains on the level.
+        A count of 0 means either fully explored or blocked.
+
+        Returns:
+            Number of reachable unexplored frontier tiles.
+        """
+        if not self.observation:
+            return 0
+
+        dungeon_level = int(self.observation.blstats[12])  # BL_DEPTH
+        stepped_memory = self._dungeon_memory.get_level(dungeon_level, create=True)
+
+        # Use find_unexplored to get candidates, but we want to count all, not just the best
+        from .pathfinding import _is_tile_unexplored
+        from .queries import get_current_level
+
+        level = get_current_level(self.observation)
+        count = 0
+
+        for y in range(21):
+            for x in range(79):
+                if _is_tile_unexplored(x, y, level, stepped_memory, self.observation):
+                    count += 1
+
+        return count
+
+    def path_distance_to(self, target) -> int:
+        """
+        Calculate the path distance to a target position.
+
+        Unlike Chebyshev distance, this returns the actual number of steps
+        needed to walk to the target, or -1 if unreachable.
+
+        Args:
+            target: Position object or (x, y) tuple
+
+        Returns:
+            Number of steps to reach target, or -1 if no path exists.
+        """
+        if not self.observation:
+            return -1
+
+        target = self._to_position(target)
+
+        # Allow with hostiles since this is just for distance calculation
+        path_result = self._find_path(target, allow_with_hostiles=True)
+        return len(path_result.path) if path_result.success else -1
+
+    def is_reachable(self, target) -> bool:
+        """
+        Check if a target position is reachable from current position.
+
+        Args:
+            target: Position object or (x, y) tuple
+
+        Returns:
+            True if a path exists to the target.
+        """
+        return self.path_distance_to(target) >= 0
+
+    def explain_path_failure(self, target) -> str:
+        """
+        Explain why pathfinding to a target failed.
+
+        Use this to understand what's blocking movement to a destination.
+        Returns a human-readable explanation of the obstacle.
+
+        Args:
+            target: Position object or (x, y) tuple
+
+        Returns:
+            String explaining why the path failed, or "Path exists" if reachable.
+        """
+        if not self.observation:
+            return "No observation available"
+
+        target = self._to_position(target)
+        current = self.position
+
+        if current == target:
+            return "Already at target"
+
+        # Try to find path
+        path_result = self._find_path(target, allow_with_hostiles=True)
+
+        if path_result.success:
+            return f"Path exists ({len(path_result.path)} steps)"
+
+        # Analyze why it failed
+        reason = path_result.reason
+
+        if reason == PathStopReason.TARGET_OUT_OF_BOUNDS:
+            return f"Target {target} is outside map bounds"
+
+        if reason == PathStopReason.TARGET_UNWALKABLE:
+            # Get more details about what's at the target
+            tile = self.get_tile(target)
+            if tile:
+                glyph = tile.glyph
+                from .glyphs import is_boulder_glyph, is_closed_door_glyph
+                if is_closed_door_glyph(glyph):
+                    return f"Target {target} is a closed door - move adjacent and use open_door()"
+                if is_boulder_glyph(glyph):
+                    return f"Target {target} is blocked by a boulder - push it or go around"
+                if tile.char in ('#', '-', '|', ' '):
+                    return f"Target {target} is a wall or unexplored area"
+                return f"Target {target} is unwalkable ('{tile.char}')"
+            return f"Target {target} is unwalkable"
+
+        if reason == PathStopReason.NO_PATH_EXISTS:
+            # Try to identify what's blocking
+            chebyshev = current.chebyshev_distance(target)
+
+            # Check for obstacles between current and target
+            obstacles = []
+            doors = self.find_doors()
+            closed_doors = [(pos, is_open) for pos, is_open in doors if not is_open]
+
+            # Check if any closed doors are between us and target
+            for door_pos, _ in closed_doors:
+                door_to_target = door_pos.chebyshev_distance(target)
+                door_to_us = door_pos.chebyshev_distance(current)
+                if door_to_us + door_to_target <= chebyshev + 2:  # Door is roughly on the path
+                    obstacles.append(f"closed door at ({door_pos.x}, {door_pos.y})")
+
+            if obstacles:
+                return f"Path blocked by {', '.join(obstacles[:3])}"
+
+            return f"No path exists from {current} to {target} - areas may be disconnected or blocked by walls"
+
+        return path_result.message or f"Path failed: {reason.value}"
 
     def find_nearest_item(self) -> TargetResult:
         """
