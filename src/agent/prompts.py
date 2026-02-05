@@ -140,6 +140,26 @@ class PromptManager:
             else:
                 result_lines.append(f"autoexplore: stopped ({stop_reason}) after {steps} steps")
 
+            # Include detailed analysis for blocked/fully_explored states
+            if stop_reason in ("blocked", "fully_explored"):
+                # Show closed doors if any
+                closed_doors = autoexplore.get("closed_doors", [])
+                if closed_doors:
+                    door_strs = [f"({d.x}, {d.y})" if hasattr(d, 'x') else str(d) for d in closed_doors[:3]]
+                    result_lines.append(f"  closed doors: {', '.join(door_strs)}" + (f" (+{len(closed_doors)-3} more)" if len(closed_doors) > 3 else ""))
+
+                # Show searchable walls count
+                searchable = autoexplore.get("searchable_walls", 0)
+                if searchable > 0:
+                    result_lines.append(f"  searchable walls: {searchable} (potential secret doors)")
+
+                # Show suggestions
+                suggestions = autoexplore.get("suggestions", [])
+                if suggestions:
+                    result_lines.append("  suggestions:")
+                    for suggestion in suggestions[:3]:
+                        result_lines.append(f"    - {suggestion}")
+
         # Show ALL API calls with success/failure status
         # This ensures the agent always knows what actions were taken
         api_calls = last_result.get("api_calls", [])

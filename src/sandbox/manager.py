@@ -134,6 +134,10 @@ class APICallTracker:
                     "stop_reason": result.stop_reason,
                     "steps_taken": getattr(result, 'steps_taken', 0),
                     "message": getattr(result, 'message', ''),
+                    "suggestions": getattr(result, 'suggestions', []),
+                    "closed_doors": getattr(result, 'closed_doors', []),
+                    "unreachable_areas": getattr(result, 'unreachable_areas', 0),
+                    "searchable_walls": getattr(result, 'searchable_walls', 0),
                 }
 
             # Build call info

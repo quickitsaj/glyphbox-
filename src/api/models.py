@@ -504,6 +504,10 @@ class AutoexploreResult:
     turns_elapsed: int  # Number of game turns
     position: "Position"  # Final position
     message: str = ""  # Human-readable explanation
+    suggestions: list[str] = field(default_factory=list)  # Actionable next steps
+    closed_doors: list["Position"] = field(default_factory=list)  # Closed doors found
+    unreachable_areas: int = 0  # Count of visible but unreachable tiles
+    searchable_walls: int = 0  # Walls adjacent to explored areas (potential secret doors)
 
     @property
     def success(self) -> bool:

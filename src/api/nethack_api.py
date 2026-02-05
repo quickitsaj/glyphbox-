@@ -205,54 +205,175 @@ class NetHackAPI:
         """
         Check if there are areas we can see but can't reach, and explain why.
 
-        This detects when:
-        1. There are closed doors we can't path to or open
-        2. There are visible floor tiles we haven't stepped on and can't reach
-
-        Used to distinguish between "fully explored" (everything reachable visited)
-        and "blocked" (visible areas exist but aren't reachable).
-
         Returns:
             Tuple of (is_blocked, explanation_message)
         """
-        if not self.observation:
-            return (False, "")
+        analysis = self.analyze_exploration_blockers()
+        if analysis["is_blocked"]:
+            return (True, analysis["message"])
+        return (False, "")
 
-        # Are there visible floor tiles we haven't stepped on and can't reach?
+    def analyze_exploration_blockers(self) -> dict:
+        """
+        Analyze what's blocking exploration and provide actionable suggestions.
+
+        Returns a dict with:
+        - is_blocked: bool - Whether exploration is blocked
+        - message: str - Human-readable explanation
+        - suggestions: list[str] - Specific actions to try
+        - closed_doors: list[Position] - All closed doors
+        - reachable_doors: list[Position] - Closed doors we can path to
+        - unreachable_count: int - Number of visible but unreachable tiles
+        - searchable_walls: int - Walls adjacent to explored floor (potential secret doors)
+        """
+        result = {
+            "is_blocked": False,
+            "message": "",
+            "suggestions": [],
+            "closed_doors": [],
+            "reachable_doors": [],
+            "unreachable_count": 0,
+            "searchable_walls": 0,
+        }
+
+        if not self.observation:
+            return result
+
         dungeon_level = int(self.observation.blstats[12])
         stepped_memory = self._dungeon_memory.get_level(dungeon_level, create=True)
         level = self.get_current_level()
+        current_pos = self.position
 
+        # Find all closed doors
+        doors = self.find_doors()
+        closed_doors = [pos for pos, is_open in doors if not is_open]
+        result["closed_doors"] = closed_doors
+
+        # Check which closed doors are reachable (we can path to adjacent tile)
+        reachable_doors = []
+        for door_pos in closed_doors:
+            for direction in CARDINAL_DIRECTIONS:
+                adj_pos = door_pos.move(direction)
+                if not (0 <= adj_pos.x < 79 and 0 <= adj_pos.y < 21):
+                    continue
+                adj_tile = self.get_tile(adj_pos)
+                if adj_tile and adj_tile.is_walkable:
+                    if current_pos == adj_pos:
+                        reachable_doors.append(door_pos)
+                        break
+                    path_result = self._find_path(adj_pos, allow_with_hostiles=True)
+                    if path_result and path_result.path:
+                        reachable_doors.append(door_pos)
+                        break
+        result["reachable_doors"] = reachable_doors
+
+        # Count unreachable visible walkable tiles
         unreachable_tiles = []
         for y in range(21):
             for x in range(79):
                 tile = level.get_tile(Position(x, y))
-                # Look for walkable tiles we can see but haven't stepped on
                 if tile and tile.is_explored and tile.is_walkable:
                     if not stepped_memory.is_stepped(x, y):
-                        # Found a visible, walkable tile we haven't visited
-                        # Try to path to it
-                        path_result = self._find_path(Position(x, y))
+                        path_result = self._find_path(Position(x, y), allow_with_hostiles=True)
                         if not path_result or not path_result.path:
-                            # Can't reach it - we're blocked
                             unreachable_tiles.append(Position(x, y))
-                            if len(unreachable_tiles) >= 5:
-                                # Don't need to find all of them
+                            if len(unreachable_tiles) >= 10:
                                 break
-            if len(unreachable_tiles) >= 5:
+            if len(unreachable_tiles) >= 10:
                 break
+        result["unreachable_count"] = len(unreachable_tiles)
+
+        # Count walls adjacent to explored floor tiles (potential secret doors)
+        searchable_walls = 0
+        checked_walls = set()
+        for y in range(21):
+            for x in range(79):
+                tile = level.get_tile(Position(x, y))
+                # Look for walls (- | chars) adjacent to explored floor
+                if tile and tile.char in ('-', '|'):
+                    wall_pos = (x, y)
+                    if wall_pos in checked_walls:
+                        continue
+                    # Check if any adjacent tile is explored floor
+                    for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                        nx, ny = x + dx, y + dy
+                        if 0 <= nx < 79 and 0 <= ny < 21:
+                            adj_tile = level.get_tile(Position(nx, ny))
+                            if adj_tile and adj_tile.is_explored and adj_tile.char == '.':
+                                searchable_walls += 1
+                                checked_walls.add(wall_pos)
+                                break
+        result["searchable_walls"] = searchable_walls
+
+        # Build message and suggestions based on analysis
+        messages = []
+        suggestions = []
 
         if unreachable_tiles:
-            tile_positions = [f"({t.x}, {t.y})" for t in unreachable_tiles[:3]]
-            logger.debug(f"_get_blocking_info: Found {len(unreachable_tiles)} unreachable walkable tile(s), e.g. {unreachable_tiles[:3]}")
-            return (True, f"Visible areas at {', '.join(tile_positions)} are unreachable.")
+            result["is_blocked"] = True
+            messages.append(f"{len(unreachable_tiles)}+ visible tiles unreachable")
 
-        return (False, "")
+        if closed_doors:
+            if reachable_doors:
+                # We can reach at least one closed door
+                nearest_door = min(reachable_doors, key=lambda d: current_pos.chebyshev_distance(d))
+                dist = current_pos.chebyshev_distance(nearest_door)
+                if dist <= 1:
+                    suggestions.append(f"Open door at ({nearest_door.x}, {nearest_door.y}) - you're adjacent")
+                else:
+                    suggestions.append(f"Move to and open door at ({nearest_door.x}, {nearest_door.y})")
+                messages.append(f"{len(closed_doors)} closed door(s), {len(reachable_doors)} reachable")
+            else:
+                # Doors exist but none are reachable
+                messages.append(f"{len(closed_doors)} closed door(s), none currently reachable")
+                result["is_blocked"] = True
+
+        if not result["is_blocked"] and searchable_walls > 0:
+            # Fully explored visible areas, but walls could hide secret doors
+            suggestions.append(f"Search walls for secret doors ({searchable_walls} searchable walls)")
+            suggestions.append("Use nh.search() repeatedly near dead-ends")
+
+        if result["is_blocked"] and not suggestions:
+            if unreachable_tiles:
+                suggestions.append("Areas may be separated by secret doors or locked doors")
+                suggestions.append("Try searching walls near dead-ends with nh.search()")
+
+        result["message"] = ". ".join(messages) if messages else "No blockers found"
+        result["suggestions"] = suggestions
+
+        return result
 
     def _has_unreachable_areas(self) -> bool:
         """Check if there are areas we can see but can't reach."""
         is_blocked, _ = self._get_blocking_info()
         return is_blocked
+
+    def _make_explore_result(
+        self,
+        stop_reason: str,
+        steps_taken: int,
+        turns_start: int,
+        message: str,
+    ) -> AutoexploreResult:
+        """
+        Create an AutoexploreResult with full analysis for blocked/fully_explored states.
+
+        Automatically populates suggestions, closed_doors, etc. when the stop_reason
+        is 'blocked' or 'fully_explored'.
+        """
+        analysis = self.analyze_exploration_blockers()
+
+        return AutoexploreResult(
+            stop_reason=stop_reason,
+            steps_taken=steps_taken,
+            turns_elapsed=self.turn - turns_start,
+            position=self.position,
+            message=message,
+            suggestions=analysis["suggestions"],
+            closed_doors=analysis["closed_doors"],
+            unreachable_areas=analysis["unreachable_count"],
+            searchable_walls=analysis["searchable_walls"],
+        )
 
     def _try_open_nearest_closed_door(self) -> bool:
         """
@@ -1482,12 +1603,9 @@ class NetHackAPI:
                 # Instead, return "blocked" - the agent needs to handle this situation manually.
                 if not target_result and recently_abandoned:
                     logger.debug(f"autoexplore: all {len(recently_abandoned)} targets abandoned and unreachable")
-                    return AutoexploreResult(
-                        stop_reason="blocked",
-                        steps_taken=steps_taken,
-                        turns_elapsed=self.turn - turns_start,
-                        position=self.position,
-                        message=f"All exploration targets unreachable (blocked by obstacles). Abandoned targets: {recently_abandoned}",
+                    return self._make_explore_result(
+                        "blocked", steps_taken, turns_start,
+                        f"All exploration targets unreachable (blocked by obstacles). Abandoned targets: {recently_abandoned}"
                     )
                 current_target = None
                 target_attempts = 0
@@ -1507,21 +1625,14 @@ class NetHackAPI:
                         if is_blocked:
                             # There ARE visible areas we can't reach
                             # Could be: closed door we can't path to, or disconnected area
-                            return AutoexploreResult(
-                                stop_reason="blocked",
-                                steps_taken=steps_taken,
-                                turns_elapsed=self.turn - turns_start,
-                                position=self.position,
-                                message=blocking_msg,
+                            return self._make_explore_result(
+                                "blocked", steps_taken, turns_start, blocking_msg
                             )
                         else:
                             # Truly fully explored
-                            return AutoexploreResult(
-                                stop_reason="fully_explored",
-                                steps_taken=steps_taken,
-                                turns_elapsed=self.turn - turns_start,
-                                position=self.position,
-                                message=f"Visible areas explored ({steps_taken} steps). Hidden rooms may exist behind secret doors.",
+                            return self._make_explore_result(
+                                "fully_explored", steps_taken, turns_start,
+                                f"Visible areas explored ({steps_taken} steps). Hidden rooms may exist behind secret doors."
                             )
                     # Hostiles detected by find_unexplored
                     return AutoexploreResult(
@@ -1564,20 +1675,13 @@ class NetHackAPI:
                     # Can't move into unexplored - check if there are other visible unexplored areas
                     is_blocked, blocking_msg = self._get_blocking_info()
                     if is_blocked:
-                        return AutoexploreResult(
-                            stop_reason="blocked",
-                            steps_taken=steps_taken,
-                            turns_elapsed=self.turn - turns_start,
-                            position=self.position,
-                            message=blocking_msg,
+                        return self._make_explore_result(
+                            "blocked", steps_taken, turns_start, blocking_msg
                         )
                     else:
-                        return AutoexploreResult(
-                            stop_reason="fully_explored",
-                            steps_taken=steps_taken,
-                            turns_elapsed=self.turn - turns_start,
-                            position=self.position,
-                            message="No visible unexplored areas. Hidden rooms may exist behind secret doors.",
+                        return self._make_explore_result(
+                            "fully_explored", steps_taken, turns_start,
+                            "No visible unexplored areas. Hidden rooms may exist behind secret doors."
                         )
                 continue
 
@@ -1606,19 +1710,12 @@ class NetHackAPI:
                     steps_msg = f" after {steps_taken} steps" if steps_taken > 0 else ""
                     _, blocking_msg = self._get_blocking_info()
                     if blocking_msg:
-                        return AutoexploreResult(
-                            stop_reason="blocked",
-                            steps_taken=steps_taken,
-                            turns_elapsed=self.turn - turns_start,
-                            position=self.position,
-                            message=blocking_msg,
+                        return self._make_explore_result(
+                            "blocked", steps_taken, turns_start, blocking_msg
                         )
-                    return AutoexploreResult(
-                        stop_reason="blocked",
-                        steps_taken=steps_taken,
-                        turns_elapsed=self.turn - turns_start,
-                        position=self.position,
-                        message=f"Too many pathfinding failures{steps_msg}. Try searching for secret doors or moving manually.",
+                    return self._make_explore_result(
+                        "blocked", steps_taken, turns_start,
+                        f"Too many pathfinding failures{steps_msg}. Try searching for secret doors or moving manually."
                     )
                 continue
 
@@ -1699,19 +1796,12 @@ class NetHackAPI:
                         steps_msg = f" after {steps_taken} steps" if steps_taken > 0 else ""
                         _, blocking_msg = self._get_blocking_info()
                         if blocking_msg:
-                            return AutoexploreResult(
-                                stop_reason="blocked",
-                                steps_taken=steps_taken,
-                                turns_elapsed=self.turn - turns_start,
-                                position=self.position,
-                                message=blocking_msg,
+                            return self._make_explore_result(
+                                "blocked", steps_taken, turns_start, blocking_msg
                             )
-                        return AutoexploreResult(
-                            stop_reason="blocked",
-                            steps_taken=steps_taken,
-                            turns_elapsed=self.turn - turns_start,
-                            position=self.position,
-                            message=f"Too many movement failures{steps_msg}. Try searching for secret doors or moving manually.",
+                        return self._make_explore_result(
+                            "blocked", steps_taken, turns_start,
+                            f"Too many movement failures{steps_msg}. Try searching for secret doors or moving manually."
                         )
                     continue
 
