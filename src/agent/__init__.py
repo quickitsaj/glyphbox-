@@ -1,9 +1,5 @@
 """Agent orchestration - LLM integration and main decision loop."""
 
-from .llm_client import AGENT_TOOLS, LLMClient, LLMResponse, ToolCall, create_client_from_config
-from .parser import ActionType, AgentDecision, DecisionParser
-from .prompts import PromptManager
-from .skill_synthesis import SkillSynthesizer, SynthesisResult
 from .agent import (
     AgentConfig,
     AgentResult,
@@ -11,6 +7,10 @@ from .agent import (
     NetHackAgent,
     create_agent,
 )
+from .llm_client import AGENT_TOOLS, LLMClient, LLMResponse, ToolCall, create_client_from_config
+from .parser import ActionType, AgentDecision, DecisionParser
+from .prompts import PromptManager
+from .skill_synthesis import SkillSynthesizer, SynthesisResult
 
 __all__ = [
     # LLM Client

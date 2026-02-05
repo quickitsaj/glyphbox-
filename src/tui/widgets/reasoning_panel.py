@@ -1,10 +1,10 @@
 """Reasoning panel showing full LLM reasoning for current decision."""
 
+from rich.syntax import Syntax
+from rich.text import Text
+from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Static
-from textual.app import ComposeResult
-from rich.text import Text
-from rich.syntax import Syntax
 
 from ..events import DecisionMade
 

@@ -7,8 +7,7 @@ and pending decisions for the current game session.
 
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -30,10 +29,10 @@ class PendingGoal:
 
     goal_type: str  # 'explore', 'fight', 'pickup', 'descend', etc.
     priority: int = 5  # 1 (highest) to 10 (lowest)
-    target: Optional[Any] = None  # Position, item name, monster, etc.
+    target: Any | None = None  # Position, item name, monster, etc.
     reason: str = ""
     created_turn: int = 0
-    expires_turn: Optional[int] = None  # Goal expires after this turn
+    expires_turn: int | None = None  # Goal expires after this turn
 
     def is_expired(self, current_turn: int) -> bool:
         """Check if goal has expired."""
@@ -119,8 +118,8 @@ class WorkingMemory:
 
         # Flags and state
         self._in_combat: bool = False
-        self._last_action: Optional[str] = None
-        self._last_action_result: Optional[str] = None
+        self._last_action: str | None = None
+        self._last_action_result: str | None = None
 
     # ==================== Turn State ====================
 
@@ -180,7 +179,7 @@ class WorkingMemory:
         # Clean up expired sightings
         self._cleanup_expired_sightings()
 
-    def get_current_state(self) -> Optional[TurnSnapshot]:
+    def get_current_state(self) -> TurnSnapshot | None:
         """Get the most recent turn snapshot."""
         return self._turn_history[0] if self._turn_history else None
 
@@ -255,7 +254,7 @@ class WorkingMemory:
 
     def get_recent_monsters(
         self,
-        max_age_turns: Optional[int] = None,
+        max_age_turns: int | None = None,
         hostile_only: bool = False,
     ) -> list[EntitySighting]:
         """
@@ -283,7 +282,7 @@ class WorkingMemory:
 
     def get_recent_items(
         self,
-        max_age_turns: Optional[int] = None,
+        max_age_turns: int | None = None,
     ) -> list[EntitySighting]:
         """Get recently seen items."""
         max_age = max_age_turns or self.sighting_expiry_turns
@@ -296,7 +295,7 @@ class WorkingMemory:
         position_x: int,
         position_y: int,
         max_age_turns: int = 5,
-    ) -> Optional[EntitySighting]:
+    ) -> EntitySighting | None:
         """Get monster last seen at a specific position."""
         cutoff = self._current_turn - max_age_turns
 
@@ -329,9 +328,9 @@ class WorkingMemory:
         self,
         goal_type: str,
         priority: int = 5,
-        target: Optional[Any] = None,
+        target: Any | None = None,
         reason: str = "",
-        expires_in_turns: Optional[int] = None,
+        expires_in_turns: int | None = None,
     ) -> None:
         """
         Add a pending goal.
@@ -358,12 +357,12 @@ class WorkingMemory:
         self._goals.append(goal)
         self._goals.sort(key=lambda g: g.priority)
 
-    def get_top_goal(self) -> Optional[PendingGoal]:
+    def get_top_goal(self) -> PendingGoal | None:
         """Get the highest priority non-expired goal."""
         self._cleanup_expired_goals()
         return self._goals[0] if self._goals else None
 
-    def get_goals(self, goal_type: Optional[str] = None) -> list[PendingGoal]:
+    def get_goals(self, goal_type: str | None = None) -> list[PendingGoal]:
         """Get all goals, optionally filtered by type."""
         self._cleanup_expired_goals()
         if goal_type:
@@ -375,7 +374,7 @@ class WorkingMemory:
         if goal in self._goals:
             self._goals.remove(goal)
 
-    def clear_goals(self, goal_type: Optional[str] = None) -> None:
+    def clear_goals(self, goal_type: str | None = None) -> None:
         """Clear goals, optionally filtered by type."""
         if goal_type:
             self._goals = [g for g in self._goals if g.goal_type != goal_type]
@@ -388,12 +387,12 @@ class WorkingMemory:
 
     # ==================== Action Tracking ====================
 
-    def record_action(self, action: str, result: Optional[str] = None) -> None:
+    def record_action(self, action: str, result: str | None = None) -> None:
         """Record the last action taken."""
         self._last_action = action
         self._last_action_result = result
 
-    def get_last_action(self) -> tuple[Optional[str], Optional[str]]:
+    def get_last_action(self) -> tuple[str | None, str | None]:
         """Get the last action and its result."""
         return self._last_action, self._last_action_result
 

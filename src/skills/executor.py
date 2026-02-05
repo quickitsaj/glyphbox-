@@ -6,18 +6,17 @@ Handles skill execution, state tracking, and error handling.
 
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from src.sandbox import (
-    ExecutionResult,
     SandboxConfig,
     SkillExecutionError,
     SkillSandbox,
     SkillTimeoutError,
 )
 
-from .models import GameStateSnapshot, Skill, SkillExecution, SkillStatistics
 from .library import SkillLibrary
+from .models import GameStateSnapshot, Skill, SkillExecution, SkillStatistics
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ class SkillExecutor:
         self,
         library: SkillLibrary,
         api: Any,  # NetHackAPI
-        sandbox_config: Optional[SandboxConfig] = None,
+        sandbox_config: SandboxConfig | None = None,
         use_docker: bool = False,
     ):
         """
@@ -68,12 +67,12 @@ class SkillExecutor:
         # Execution tracking
         self._history: list[SkillExecution] = []
         self._statistics: dict[str, SkillStatistics] = {}
-        self._current_execution: Optional[SkillExecution] = None
+        self._current_execution: SkillExecution | None = None
 
     async def execute(
         self,
         skill_name: str,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
         **params,
     ) -> SkillExecution:
         """
@@ -101,8 +100,8 @@ class SkillExecutor:
         self,
         code: str,
         skill_name: str,
-        params: Optional[dict[str, Any]] = None,
-        timeout: Optional[float] = None,
+        params: dict[str, Any] | None = None,
+        timeout: float | None = None,
         persist: bool = False,
     ) -> SkillExecution:
         """
@@ -140,7 +139,7 @@ class SkillExecutor:
         self,
         skill: Skill,
         params: dict[str, Any],
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> SkillExecution:
         """Execute a skill and record the execution."""
         # Capture state before
@@ -239,7 +238,7 @@ class SkillExecutor:
 
     def get_history(
         self,
-        skill_name: Optional[str] = None,
+        skill_name: str | None = None,
         limit: int = 100,
     ) -> list[SkillExecution]:
         """
@@ -258,7 +257,7 @@ class SkillExecutor:
 
         return list(reversed(history[-limit:]))
 
-    def get_statistics(self, skill_name: str) -> Optional[SkillStatistics]:
+    def get_statistics(self, skill_name: str) -> SkillStatistics | None:
         """
         Get statistics for a skill.
 
@@ -307,7 +306,7 @@ class SkillExecutor:
         self._history.clear()
 
     @property
-    def current_execution(self) -> Optional[SkillExecution]:
+    def current_execution(self) -> SkillExecution | None:
         """Get the currently running execution, if any."""
         return self._current_execution
 

@@ -11,9 +11,10 @@ Follows NetHack4 conventions:
 
 import heapq
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from nle import nethack
 
@@ -23,15 +24,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 from .environment import Observation
-from .glyphs import is_walkable_glyph, is_dangerous_terrain_glyph, is_flight_required_glyph, is_boulder_glyph, is_closed_door_glyph
+from .glyphs import (
+    is_boulder_glyph,
+    is_closed_door_glyph,
+    is_flight_required_glyph,
+    is_walkable_glyph,
+)
 from .models import Direction, DungeonLevel, Position, Tile
 from .queries import (
-    get_current_level,
-    get_position,
-    get_hostile_monsters,
     can_fly,
-    is_near_shopkeeper,
+    get_current_level,
+    get_hostile_monsters,
+    get_position,
     is_grid_bug_form,
+    is_near_shopkeeper,
 )
 
 
@@ -80,7 +86,7 @@ class PathResult:
 @dataclass
 class TargetResult:
     """Result of a target-finding operation (find_unexplored, find_stairs, etc.)."""
-    position: Optional[Position]
+    position: Position | None
     reason: PathStopReason
     message: str = ""
 
@@ -220,8 +226,8 @@ def find_path(
     avoid_monsters: bool = True,
     avoid_traps: bool = True,
     allow_with_hostiles: bool = False,
-    player_can_fly: Optional[bool] = None,
-    cardinal_only: Optional[bool] = None,
+    player_can_fly: bool | None = None,
+    cardinal_only: bool | None = None,
     level_memory: Optional["LevelMemory"] = None,
     pass_through_doors: bool = False,
 ) -> PathResult:
@@ -322,7 +328,7 @@ def find_nearest(
     obs: Observation,
     predicate: Callable[[Tile], bool],
     max_distance: int = 100,
-) -> Optional[Position]:
+) -> Position | None:
     """
     Find the nearest tile matching a predicate.
 
@@ -532,7 +538,7 @@ def find_unexplored(
     stepped_memory: Optional["LevelMemory"] = None,
     max_distance: int = 100,
     allow_with_hostiles: bool = False,
-    excluded_positions: Optional[set[Position]] = None,
+    excluded_positions: set[Position] | None = None,
 ) -> TargetResult:
     """
     Find the best unexplored tile using NetHack4's algorithm.
@@ -651,7 +657,7 @@ def find_stairs_down(obs: Observation, allow_with_hostiles: bool = False) -> Tar
     return TargetResult(None, PathStopReason.NO_TARGET_FOUND, "No stairs down found on this level")
 
 
-def find_nearest_monster(obs: Observation) -> Optional[Position]:
+def find_nearest_monster(obs: Observation) -> Position | None:
     """Find position of nearest hostile monster."""
     from .queries import get_hostile_monsters
 
@@ -913,7 +919,7 @@ def _bfs_reachable(
     cardinal_only: bool = False,
     max_distance: int = 100,
     explored_only: bool = False,
-    level: Optional[DungeonLevel] = None,
+    level: DungeonLevel | None = None,
     level_memory: Optional["LevelMemory"] = None,
 ):
     """

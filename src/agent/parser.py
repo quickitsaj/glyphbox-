@@ -9,7 +9,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +29,13 @@ class AgentDecision:
     """Parsed decision from the agent."""
 
     action: ActionType
-    skill_name: Optional[str] = None
+    skill_name: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
     reasoning: str = ""
-    code: Optional[str] = None
-    command: Optional[str] = None  # For direct_action
+    code: str | None = None
+    command: str | None = None  # For direct_action
     raw_response: str = ""
-    parse_error: Optional[str] = None
+    parse_error: str | None = None
 
     @property
     def is_valid(self) -> bool:
@@ -127,7 +127,7 @@ class DecisionParser:
         # Extract fields
         return self._parse_json_decision(data, response)
 
-    def _extract_json(self, response: str) -> Optional[str]:
+    def _extract_json(self, response: str) -> str | None:
         """Extract JSON from response (handles code blocks)."""
         response = response.strip()
 
@@ -228,7 +228,7 @@ class DecisionParser:
 
         return decision
 
-    def _extract_code(self, response: str) -> Optional[str]:
+    def _extract_code(self, response: str) -> str | None:
         """Extract Python code from response."""
         matches = self.CODE_BLOCK_PATTERN.findall(response)
 
@@ -279,7 +279,7 @@ class DecisionParser:
         return decisions
 
 
-def extract_skill_name_from_code(code: str) -> Optional[str]:
+def extract_skill_name_from_code(code: str) -> str | None:
     """
     Extract the skill function name from Python code.
 
@@ -294,7 +294,7 @@ def extract_skill_name_from_code(code: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
-def validate_skill_code(code: str) -> tuple[bool, Optional[str]]:
+def validate_skill_code(code: str) -> tuple[bool, str | None]:
     """
     Basic validation of skill code structure.
 

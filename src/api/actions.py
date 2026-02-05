@@ -4,7 +4,7 @@ Action execution for NetHack.
 Maps high-level actions to NLE action indices and handles multi-step commands.
 """
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from nle import nethack
 
@@ -57,7 +57,7 @@ class ActionExecutor:
             Direction.SELF: ord("."),
         }
 
-    def _get_action_idx(self, char: int) -> Optional[int]:
+    def _get_action_idx(self, char: int) -> int | None:
         """Get action index for a character code."""
         return self._char_to_idx.get(char)
 
@@ -710,7 +710,7 @@ class ActionExecutor:
 
         return True, items
 
-    def pickup(self, item_letter: Optional[str] = None) -> ActionResult:
+    def pickup(self, item_letter: str | None = None) -> ActionResult:
         """
         Pick up items from the ground.
 
@@ -782,7 +782,7 @@ class ActionExecutor:
         """
         return self._execute_sequence([ord("d"), ord(item_letter)])
 
-    def eat(self, item_letter: Optional[str] = None) -> ActionResult:
+    def eat(self, item_letter: str | None = None) -> ActionResult:
         """
         Eat food.
 
@@ -995,7 +995,7 @@ class ActionExecutor:
 
     # ==================== Special ====================
 
-    def cast_spell(self, spell_letter: str, direction: Optional[Direction] = None) -> ActionResult:
+    def cast_spell(self, spell_letter: str, direction: Direction | None = None) -> ActionResult:
         """
         Cast a memorized spell.
 

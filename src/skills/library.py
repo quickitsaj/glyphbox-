@@ -5,13 +5,9 @@ The library manages both hand-written starter skills and
 agent-generated skills, providing retrieval by name or category.
 """
 
-import json
 import logging
-import os
-import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from src.sandbox.validation import extract_skill_metadata, validate_skill
 
@@ -44,7 +40,7 @@ class SkillLibrary:
         library.save("new_skill", code, metadata)
     """
 
-    def __init__(self, skills_dir: Optional[str] = None):
+    def __init__(self, skills_dir: str | None = None):
         """
         Initialize the skill library.
 
@@ -60,7 +56,7 @@ class SkillLibrary:
     # Directories to exclude when loading skills (agent-generated skills from previous runs)
     DEFAULT_EXCLUDE_DIRS = {"custom", "generated", "temp"}
 
-    def load_all(self, exclude_dirs: Optional[set[str]] = None) -> int:
+    def load_all(self, exclude_dirs: set[str] | None = None) -> int:
         """
         Load all skills from the skills directory.
 
@@ -100,7 +96,7 @@ class SkillLibrary:
         logger.info(f"Loaded {count} skills from {self.skills_dir}")
         return count
 
-    def _load_skill_file(self, file_path: Path) -> Optional[Skill]:
+    def _load_skill_file(self, file_path: Path) -> Skill | None:
         """Load a skill from a Python file."""
         code = file_path.read_text()
 
@@ -143,7 +139,7 @@ class SkillLibrary:
         if skill.name not in self._by_category[skill.category]:
             self._by_category[skill.category].append(skill.name)
 
-    def get(self, name: str) -> Optional[Skill]:
+    def get(self, name: str) -> Skill | None:
         """
         Get a skill by name.
 
@@ -155,7 +151,7 @@ class SkillLibrary:
         """
         return self._skills.get(name)
 
-    def get_code(self, name: str) -> Optional[str]:
+    def get_code(self, name: str) -> str | None:
         """
         Get just the code for a skill.
 
@@ -174,7 +170,7 @@ class SkillLibrary:
 
     def list_skills(
         self,
-        category: Optional[SkillCategory] = None,
+        category: SkillCategory | None = None,
     ) -> list[Skill]:
         """
         List skills, optionally filtered by category.
@@ -193,7 +189,7 @@ class SkillLibrary:
 
     def list_names(
         self,
-        category: Optional[SkillCategory] = None,
+        category: SkillCategory | None = None,
     ) -> list[str]:
         """
         List skill names, optionally filtered by category.
@@ -212,7 +208,7 @@ class SkillLibrary:
         self,
         name: str,
         code: str,
-        metadata: Optional[SkillMetadata] = None,
+        metadata: SkillMetadata | None = None,
         overwrite: bool = False,
     ) -> Skill:
         """

@@ -7,7 +7,7 @@ proper observation parsing and action handling.
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import gymnasium as gym
 import numpy as np
@@ -187,7 +187,7 @@ class NLEWrapper:
         self,
         env_name: str = "NetHackChallenge-v0",
         max_episode_steps: int = 1_000_000,
-        render_mode: Optional[str] = None,
+        render_mode: str | None = None,
     ):
         """
         Initialize the NLE wrapper.
@@ -201,8 +201,8 @@ class NLEWrapper:
         self.max_episode_steps = max_episode_steps
         self.render_mode = render_mode
 
-        self._env: Optional[gym.Env] = None
-        self._last_obs: Optional[Observation] = None
+        self._env: gym.Env | None = None
+        self._last_obs: Observation | None = None
         self._done: bool = True
         self._episode_step: int = 0
         self._total_reward: float = 0.0
@@ -314,7 +314,7 @@ class NLEWrapper:
 
         return self._last_obs, reward, terminated, truncated, info
 
-    def render(self) -> Optional[str]:
+    def render(self) -> str | None:
         """Render the current game state."""
         if self._env is not None:
             return self._env.render()
@@ -328,7 +328,7 @@ class NLEWrapper:
             logger.info("Environment closed")
 
     @property
-    def last_observation(self) -> Optional[Observation]:
+    def last_observation(self) -> Observation | None:
         """Get the last observation."""
         return self._last_obs
 

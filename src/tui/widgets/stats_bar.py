@@ -1,10 +1,11 @@
 """Stats bar widget showing HP, Turn, Level, Score, Hunger, BALROG Progress."""
 
-from textual.widgets import Static
 from rich.text import Text
+from textual.widgets import Static
+
+from src.scoring import Progress
 
 from ..events import GameStateUpdated
-from src.scoring import Progress
 
 
 class StatsBar(Static):

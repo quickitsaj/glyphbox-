@@ -3,16 +3,15 @@
 import asyncio
 import logging
 import signal
-from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Header, Footer
+from textual.widgets import Footer, Header
 
 from .events import AgentStatusChanged, DecisionMade, GameStateUpdated, SkillExecuted
-from .logging import setup_run_logging, teardown_run_logging, get_log_file
+from .logging import get_log_file, setup_run_logging, teardown_run_logging
 from .runner import TUIAgentRunner
 from .widgets import (
     ControlsWidget,
@@ -98,7 +97,7 @@ class NetHackTUI(App):
         super().__init__(**kwargs)
         self.agent = agent
         self.api = api
-        self.runner: Optional[TUIAgentRunner] = None
+        self.runner: TUIAgentRunner | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the application layout."""

@@ -9,7 +9,6 @@ import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from .models import SkillExecution, SkillStatistics
 
@@ -76,7 +75,7 @@ class StatisticsStore:
         report = store.generate_report()
     """
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         """
         Initialize the statistics store.
 
@@ -84,7 +83,7 @@ class StatisticsStore:
             db_path: Path to SQLite database (uses default if not specified)
         """
         self.db_path = Path(db_path) if db_path else Path(DEFAULT_DB_PATH)
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
 
     def initialize(self) -> None:
         """Initialize the database and create tables."""
@@ -107,7 +106,7 @@ class StatisticsStore:
     def record_execution(
         self,
         execution: SkillExecution,
-        episode_id: Optional[str] = None,
+        episode_id: str | None = None,
     ) -> int:
         """
         Record a skill execution.
@@ -223,7 +222,7 @@ class StatisticsStore:
 
         self._conn.commit()
 
-    def get_statistics(self, skill_name: str) -> Optional[SkillStatistics]:
+    def get_statistics(self, skill_name: str) -> SkillStatistics | None:
         """
         Get statistics for a skill.
 
@@ -279,8 +278,8 @@ class StatisticsStore:
 
     def get_executions(
         self,
-        skill_name: Optional[str] = None,
-        episode_id: Optional[str] = None,
+        skill_name: str | None = None,
+        episode_id: str | None = None,
         limit: int = 100,
     ) -> list[SkillExecution]:
         """

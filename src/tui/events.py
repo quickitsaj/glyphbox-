@@ -1,7 +1,6 @@
 """Custom Textual events for TUI updates."""
 
 from dataclasses import dataclass
-from typing import Optional
 
 from textual.message import Message
 
@@ -100,12 +99,12 @@ class AgentStatusChanged(Message):
     """Emitted when agent running/paused/stopped state changes."""
 
     status: str  # "running", "paused", "stopped", "error"
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
     def __init__(
         self,
         status: str,
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ) -> None:
         super().__init__()
         self.status = status

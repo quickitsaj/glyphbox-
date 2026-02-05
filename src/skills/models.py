@@ -8,7 +8,7 @@ and performance statistics.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class SkillCategory(Enum):
@@ -40,8 +40,8 @@ class SkillMetadata:
     stops_when: list[str] = field(default_factory=list)
     author: str = "agent"  # "agent" for generated, "human" for hand-written
     version: int = 1
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     tags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -79,7 +79,7 @@ class Skill:
     name: str
     code: str
     metadata: SkillMetadata = field(default_factory=SkillMetadata)
-    file_path: Optional[str] = None  # Path if loaded from file
+    file_path: str | None = None  # Path if loaded from file
 
     @property
     def category(self) -> SkillCategory:
@@ -174,15 +174,15 @@ class SkillExecution:
     skill_name: str
     params: dict[str, Any]
     started_at: datetime
-    ended_at: Optional[datetime] = None
+    ended_at: datetime | None = None
     success: bool = False
     stopped_reason: str = ""
     result_data: dict[str, Any] = field(default_factory=dict)
     actions_taken: int = 0
     turns_elapsed: int = 0
-    error: Optional[str] = None
-    state_before: Optional[GameStateSnapshot] = None
-    state_after: Optional[GameStateSnapshot] = None
+    error: str | None = None
+    state_before: GameStateSnapshot | None = None
+    state_after: GameStateSnapshot | None = None
 
     @property
     def duration_seconds(self) -> float:
@@ -240,7 +240,7 @@ class SkillStatistics:
     stop_reasons: dict[str, int] = field(default_factory=dict)
     avg_actions_per_execution: float = 0.0
     avg_turns_per_execution: float = 0.0
-    last_executed: Optional[datetime] = None
+    last_executed: datetime | None = None
 
     @property
     def success_rate(self) -> float:

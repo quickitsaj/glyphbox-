@@ -14,10 +14,9 @@ License: MIT (https://github.com/balrog-ai/BALROG/blob/main/LICENSE)
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Optional
 
 # Load achievements data (win probabilities by dungeon/xp level)
-with open(os.path.join(os.path.dirname(__file__), "achievements.json"), "r") as f:
+with open(os.path.join(os.path.dirname(__file__), "achievements.json")) as f:
     ACHIEVEMENTS = json.load(f)
 
 
@@ -37,7 +36,7 @@ class Progress:
     time: int = 0
     dlvl_list: list = field(default_factory=list)
     xplvl_list: list = field(default_factory=list)
-    highest_achievement: Optional[str] = None
+    highest_achievement: str | None = None
     progression: float = 0.0
 
     def update(self, depth: int, experience_level: int) -> float:

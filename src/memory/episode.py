@@ -9,7 +9,6 @@ game history.
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
 
 from .dungeon import DungeonMemory
 from .manager import MemoryManager
@@ -23,9 +22,9 @@ class EpisodeEvent:
     turn: int
     event_type: str
     description: str
-    level_number: Optional[int] = None
-    branch: Optional[str] = None
-    position: Optional[tuple[int, int]] = None
+    level_number: int | None = None
+    branch: str | None = None
+    position: tuple[int, int] | None = None
     data: dict = field(default_factory=dict)
 
 
@@ -35,15 +34,15 @@ class EpisodeStatistics:
 
     episode_id: str
     started_at: datetime
-    ended_at: Optional[datetime] = None
-    end_reason: Optional[str] = None
+    ended_at: datetime | None = None
+    end_reason: str | None = None
 
     # Game stats
     final_score: int = 0
     final_turns: int = 0
     final_depth: int = 0
     final_xp_level: int = 1  # NetHack characters start at level 1
-    death_reason: Optional[str] = None
+    death_reason: str | None = None
 
     # Agent stats
     skills_used: int = 0
@@ -108,8 +107,8 @@ class EpisodeMemory:
 
     def __init__(
         self,
-        db_path: Optional[str] = None,
-        episode_id: Optional[str] = None,
+        db_path: str | None = None,
+        episode_id: str | None = None,
     ):
         """
         Initialize episode memory.
@@ -128,8 +127,8 @@ class EpisodeMemory:
         # Episode state
         self._started = False
         self._ended = False
-        self._start_time: Optional[datetime] = None
-        self._end_time: Optional[datetime] = None
+        self._start_time: datetime | None = None
+        self._end_time: datetime | None = None
 
         # Statistics tracking
         self._stats = EpisodeStatistics(
@@ -169,7 +168,7 @@ class EpisodeMemory:
         end_reason: str,
         final_score: int = 0,
         final_turns: int = 0,
-        death_reason: Optional[str] = None,
+        death_reason: str | None = None,
     ) -> EpisodeStatistics:
         """
         End the episode.
@@ -294,11 +293,11 @@ class EpisodeMemory:
         self,
         event_type: str,
         description: str,
-        turn: Optional[int] = None,
-        level_number: Optional[int] = None,
-        branch: Optional[str] = None,
-        position: Optional[tuple[int, int]] = None,
-        data: Optional[dict] = None,
+        turn: int | None = None,
+        level_number: int | None = None,
+        branch: str | None = None,
+        position: tuple[int, int] | None = None,
+        data: dict | None = None,
     ) -> None:
         """Record a significant event."""
         if turn is None:
@@ -340,10 +339,10 @@ class EpisodeMemory:
         self,
         skill_name: str,
         success: bool,
-        stopped_reason: Optional[str] = None,
+        stopped_reason: str | None = None,
         actions_taken: int = 0,
         turns_elapsed: int = 0,
-        result_data: Optional[dict] = None,
+        result_data: dict | None = None,
     ) -> None:
         """Record a skill execution."""
         self._skills_used.add(skill_name)
@@ -405,7 +404,7 @@ class EpisodeMemory:
                 damage_dealt=damage_dealt,
             )
 
-    def record_damage_taken(self, amount: int, source: Optional[str] = None) -> None:
+    def record_damage_taken(self, amount: int, source: str | None = None) -> None:
         """Record damage taken."""
         self._stats.damage_taken += amount
 
@@ -421,7 +420,7 @@ class EpisodeMemory:
         self,
         appearance: str,
         object_class: str,
-        true_identity: Optional[str] = None,
+        true_identity: str | None = None,
         method: str = "use",
     ) -> None:
         """Record identifying an item."""
@@ -448,7 +447,7 @@ class EpisodeMemory:
     def record_stash(
         self,
         items: list[str],
-        position: Optional[tuple[int, int]] = None,
+        position: tuple[int, int] | None = None,
     ) -> None:
         """Record finding a stash of items."""
         if position is None:
@@ -469,7 +468,7 @@ class EpisodeMemory:
 
     def get_events(
         self,
-        event_type: Optional[str] = None,
+        event_type: str | None = None,
         limit: int = 50,
     ) -> list[EpisodeEvent]:
         """Get recorded events."""

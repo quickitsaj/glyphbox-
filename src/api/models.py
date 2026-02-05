@@ -7,7 +7,7 @@ type-safe way that's easy for both skills and the LLM to work with.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class HungerState(Enum):
@@ -190,7 +190,7 @@ class Position:
         """Alias for distance_to - Chebyshev distance (8-directional)."""
         return self.distance_to(other)
 
-    def direction_to(self, other: "Position") -> Optional[Direction]:
+    def direction_to(self, other: "Position") -> Direction | None:
         """Get the compass direction toward another position."""
         dx = other.x - self.x
         dy = other.y - self.y
@@ -343,8 +343,8 @@ class Item:
     glyph: int
     name: str
     char: str = "?"
-    position: Optional[Position] = None  # None if in inventory
-    slot: Optional[str] = None  # Inventory letter (a-zA-Z)
+    position: Position | None = None  # None if in inventory
+    slot: str | None = None  # Inventory letter (a-zA-Z)
     quantity: int = 1
     buc_status: BUCStatus = BUCStatus.UNKNOWN
     identified: bool = False
@@ -388,8 +388,8 @@ class Tile:
     is_walkable: bool = True
     is_explored: bool = False
     has_trap: bool = False
-    trap_type: Optional[str] = None
-    feature: Optional[str] = None  # "door", "altar", "fountain", etc.
+    trap_type: str | None = None
+    feature: str | None = None  # "door", "altar", "fountain", etc.
 
     @property
     def is_wall(self) -> bool:
@@ -438,7 +438,7 @@ class DungeonLevel:
             return 0.0
         return self.explored_tiles / self.total_walkable
 
-    def get_tile(self, pos: Position) -> Optional[Tile]:
+    def get_tile(self, pos: Position) -> Tile | None:
         """Get tile at position, or None if out of bounds."""
         if 0 <= pos.y < len(self.tiles) and 0 <= pos.x < len(self.tiles[0]):
             return self.tiles[pos.y][pos.x]
@@ -453,7 +453,7 @@ class ActionResult:
     messages: list[str] = field(default_factory=list)
     turn_elapsed: bool = True
     state_changed: bool = True
-    error: Optional[str] = None
+    error: str | None = None
 
     @classmethod
     def failure(cls, error: str) -> "ActionResult":
@@ -461,7 +461,7 @@ class ActionResult:
         return cls(success=False, error=error, turn_elapsed=False, state_changed=False)
 
     @classmethod
-    def ok(cls, messages: Optional[list[str]] = None) -> "ActionResult":
+    def ok(cls, messages: list[str] | None = None) -> "ActionResult":
         """Create a success result."""
         return cls(success=True, messages=messages or [])
 

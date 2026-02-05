@@ -8,7 +8,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -158,12 +158,12 @@ class LLMResponse:
 
     content: str
     model: str
-    usage: Optional[dict] = None
-    finish_reason: Optional[str] = None
-    tool_call: Optional[ToolCall] = None  # Tool call if model invoked a tool
+    usage: dict | None = None
+    finish_reason: str | None = None
+    tool_call: ToolCall | None = None  # Tool call if model invoked a tool
     # Extended thinking / reasoning support (OpenRouter)
-    reasoning: Optional[str] = None  # The model's thinking/reasoning text
-    reasoning_details: Optional[list] = None  # Full reasoning blocks for re-feeding
+    reasoning: str | None = None  # The model's thinking/reasoning text
+    reasoning_details: list | None = None  # Full reasoning blocks for re-feeding
 
 
 class LLMClient:
@@ -179,8 +179,8 @@ class LLMClient:
         model: str = "anthropic/claude-opus-4.5",
         base_url: str = "https://openrouter.ai/api/v1",
         temperature: float = 0.2,
-        api_key: Optional[str] = None,
-        reasoning: Optional[str] = None,
+        api_key: str | None = None,
+        reasoning: str | None = None,
     ):
         """
         Initialize the LLM client.
@@ -225,9 +225,9 @@ class LLMClient:
     async def complete(
         self,
         prompt: str,
-        system: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
+        system: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """
         Generate a completion from the LLM.
@@ -300,9 +300,9 @@ class LLMClient:
     async def complete_with_history(
         self,
         messages: list[dict],
-        system: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
+        system: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """
         Generate a completion with conversation history.
@@ -376,9 +376,9 @@ class LLMClient:
         self,
         messages: list[dict],
         tools: list[dict],
-        system: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
+        system: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
         max_tool_retries: int = 5,
     ) -> LLMResponse:
         """
