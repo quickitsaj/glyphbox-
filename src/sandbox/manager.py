@@ -6,21 +6,15 @@ using a restricted Python execution environment.
 """
 
 import asyncio
-import json
 import logging
-import os
-import tempfile
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any
 
 from .exceptions import (
-    SandboxError,
-    SkillExecutionError,
     SkillTimeoutError,
 )
-from .validation import validate_skill, validate_adhoc_code
+from .validation import validate_adhoc_code, validate_skill
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +52,7 @@ class APICallTracker:
     def __init__(self, api):
         self._api = api
         self._calls: list[dict] = []
-        self._autoexplore_result: Optional[dict] = None
+        self._autoexplore_result: dict | None = None
 
     def _translate_error(self, error_msg: str, method: str) -> str:
         """Translate technical errors to actionable guidance for the agent."""
@@ -75,8 +69,8 @@ class APICallTracker:
             "is not walkable":
                 "Target position is blocked (wall, boulder, closed door, or monster).",
             "item_letter must be a single character":
-                f"Use a single inventory letter like 'a', not a full name. "
-                f"For eating from ground, use nh.eat() with no arguments.",
+                "Use a single inventory letter like 'a', not a full name. "
+                "For eating from ground, use nh.eat() with no arguments.",
         }
         for pattern, translation in translations.items():
             if pattern in error_msg:
@@ -189,7 +183,7 @@ class APICallTracker:
         """Get list of failed API calls only (for backward compatibility)."""
         return [c for c in self._calls if not c.get("success", True)]
 
-    def get_autoexplore_result(self) -> Optional[dict]:
+    def get_autoexplore_result(self) -> dict | None:
         """Get the autoexplore result if autoexplore was called."""
         return self._autoexplore_result
 
@@ -208,8 +202,8 @@ class ExecutionResult:
     """Result of skill execution in sandbox."""
 
     success: bool
-    result: Optional[dict[str, Any]] = None
-    error: Optional[str] = None
+    result: dict[str, Any] | None = None
+    error: str | None = None
     stdout: str = ""
     stderr: str = ""
     execution_time: float = 0.0
@@ -246,7 +240,7 @@ class SkillSandbox:
             print(f"Code failed: {result.error}")
     """
 
-    def __init__(self, config: Optional[SandboxConfig] = None):
+    def __init__(self, config: SandboxConfig | None = None):
         """
         Initialize the sandbox manager.
 
@@ -261,7 +255,7 @@ class SkillSandbox:
         skill_name: str,
         params: dict[str, Any],
         api: Any,  # NetHackAPI instance
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> ExecutionResult:
         """
         Execute a skill locally in a restricted Python environment.
@@ -292,7 +286,8 @@ class SkillSandbox:
             # Import types to inject into namespace
             import random
             import re
-            from src.api.models import SkillResult, Direction, Position, HungerState
+
+            from src.api.models import Direction, HungerState, Position, SkillResult
             from src.api.pathfinding import PathResult, PathStopReason, TargetResult
 
             # Strip import statements since we pre-inject needed classes
@@ -449,7 +444,7 @@ class SkillSandbox:
         self,
         code: str,
         api: Any,  # NetHackAPI instance
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> ExecutionResult:
         """
         Execute ad-hoc code in sandbox (no async def wrapper required).
@@ -497,7 +492,6 @@ class SkillSandbox:
 
         # Capture stdout
         import io
-        import sys
         captured_output = io.StringIO()
 
         # Wrap API to track failed calls
@@ -511,7 +505,8 @@ class SkillSandbox:
         try:
             # Import models to inject into namespace
             import random
-            from src.api.models import Direction, Position, HungerState
+
+            from src.api.models import Direction, HungerState, Position
             from src.api.pathfinding import PathResult, PathStopReason, TargetResult
 
             # Wrap code in async function for asyncio execution

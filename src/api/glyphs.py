@@ -7,12 +7,8 @@ NLE uses glyph IDs to represent everything visible on the map.
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 from nle import nethack
-
-from .models import ObjectClass, Position
-
 
 # === Module-level caches built from NLE APIs ===
 
@@ -232,9 +228,9 @@ class GlyphInfo:
     glyph_type: GlyphType
     char: str  # ASCII character representation
     name: str  # Human-readable name
-    monster_id: Optional[int] = None
-    object_id: Optional[int] = None
-    cmap_id: Optional[int] = None
+    monster_id: int | None = None
+    object_id: int | None = None
+    cmap_id: int | None = None
     color: int = 0
     is_walkable: bool = True
     is_hostile: bool = False
@@ -242,7 +238,7 @@ class GlyphInfo:
     is_tame: bool = False
 
 
-def parse_glyph(glyph: int, char: Optional[str] = None, description: Optional[str] = None) -> GlyphInfo:
+def parse_glyph(glyph: int, char: str | None = None, description: str | None = None) -> GlyphInfo:
     """
     Parse a glyph ID into structured information.
 

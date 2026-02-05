@@ -5,12 +5,15 @@ These functions extract structured information from raw NLE observations.
 """
 
 import re
-from typing import Optional
-
-import numpy as np
 
 from .environment import Observation
-from .glyphs import GlyphType, is_boulder_glyph, is_hostile_glyph, is_item_glyph, is_monster_glyph, parse_glyph
+from .glyphs import (
+    GlyphType,
+    is_boulder_glyph,
+    is_item_glyph,
+    is_monster_glyph,
+    parse_glyph,
+)
 from .models import (
     Alignment,
     BUCStatus,
@@ -114,7 +117,7 @@ def is_grid_bug_form(obs: Observation) -> bool:
     return False
 
 
-def find_shopkeeper(obs: Observation) -> Optional[Position]:
+def find_shopkeeper(obs: Observation) -> Position | None:
     """Find shopkeeper position on current level, or None if not visible."""
     from nle import nethack
     for y in range(21):
@@ -516,7 +519,7 @@ def get_current_level(obs: Observation) -> DungeonLevel:
     )
 
 
-def find_stairs(obs: Observation) -> tuple[Optional[Position], Optional[Position]]:
+def find_stairs(obs: Observation) -> tuple[Position | None, Position | None]:
     """
     Find stairs up and down on current level.
 

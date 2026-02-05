@@ -10,19 +10,18 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
-from .llm_client import get_agent_tools, LLMClient, LLMResponse
-from .parser import ActionType, AgentDecision, DecisionParser
-from .prompts import PromptManager
-from .skill_synthesis import SkillSynthesizer
-
-from src.api.models import Direction
 from src.config import AgentConfig
 from src.memory import EpisodeMemory
 from src.sandbox.manager import SkillSandbox
 from src.skills import SkillExecutor, SkillLibrary
-from src.tui.logging import DecisionLogger, SkillLogger, GameStateLogger
+from src.tui.logging import DecisionLogger, GameStateLogger, SkillLogger
+
+from .llm_client import LLMClient, get_agent_tools
+from .parser import ActionType, AgentDecision, DecisionParser
+from .prompts import PromptManager
+from .skill_synthesis import SkillSynthesizer
 
 logger = logging.getLogger(__name__)
 decision_logger = DecisionLogger()
@@ -41,8 +40,8 @@ class AgentState:
     skills_executed: int = 0
     skills_created: int = 0
     consecutive_errors: int = 0
-    last_decision: Optional[AgentDecision] = None
-    last_skill_result: Optional[dict] = None
+    last_decision: AgentDecision | None = None
+    last_skill_result: dict | None = None
     running: bool = False
     paused: bool = False
 
@@ -53,7 +52,7 @@ class AgentResult:
 
     episode_id: str
     started_at: datetime
-    ended_at: Optional[datetime] = None
+    ended_at: datetime | None = None
     end_reason: str = ""
     final_score: int = 0
     final_turns: int = 0
@@ -96,8 +95,8 @@ class NetHackAgent:
         llm_client: LLMClient,
         skill_library: SkillLibrary,
         skill_executor: SkillExecutor,
-        config: Optional[AgentConfig] = None,
-        db_path: Optional[str] = None,
+        config: AgentConfig | None = None,
+        db_path: str | None = None,
     ):
         """
         Initialize the NetHack agent.
@@ -129,14 +128,14 @@ class NetHackAgent:
 
         # Memory
         self._db_path = db_path
-        self.memory: Optional[EpisodeMemory] = None
+        self.memory: EpisodeMemory | None = None
 
         # Game API
-        self._api: Optional[Any] = None
+        self._api: Any | None = None
 
         # State
         self.state = AgentState()
-        self._result: Optional[AgentResult] = None
+        self._result: AgentResult | None = None
 
         # Conversation history for multi-turn LLM context
         self._conversation: list[dict] = []
@@ -246,7 +245,7 @@ class NetHackAgent:
 
         return False
 
-    async def step(self) -> Optional[AgentDecision]:
+    async def step(self) -> AgentDecision | None:
         """
         Execute one agent step.
 
@@ -379,6 +378,7 @@ class NetHackAgent:
         altars = []
         reminders = []
         notes = []
+        exploration_info = None
         if self._api:
             if self.config.local_map_mode:
                 game_screen = self._api.get_local_map(self.config.local_map_radius)
@@ -399,6 +399,21 @@ class NetHackAgent:
             reminders = self._api.get_fired_reminders()
             notes = self._api.get_active_notes()
 
+            # Gather exploration info for spatial reasoning
+            exploration_info = {
+                "explored_pct": self._api.get_explored_percentage(),
+                "frontier_count": self._api.get_frontier_tile_count(),
+                "stairs_down_distance": -1,
+                "stairs_up_distance": -1,
+            }
+            # Calculate path distances to stairs
+            if stairs_positions and len(stairs_positions) == 2:
+                stairs_up, stairs_down = stairs_positions
+                if stairs_down:
+                    exploration_info["stairs_down_distance"] = self._api.path_distance_to(stairs_down)
+                if stairs_up:
+                    exploration_info["stairs_up_distance"] = self._api.path_distance_to(stairs_up)
+
         # Format last result text (before building the full prompt)
         result_text = self.prompts.format_last_result(last_result) if last_result else None
 
@@ -416,6 +431,7 @@ class NetHackAgent:
             altars=altars,
             reminders=reminders,
             notes=notes,
+            exploration_info=exploration_info,
         )
 
         # Get LLM response with tool calling
@@ -668,7 +684,7 @@ class NetHackAgent:
                 self.state.last_skill_result["autoexplore_result"] = autoexplore_result
 
             if result.success:
-                logger.info(f"Executed code successfully")
+                logger.info("Executed code successfully")
             else:
                 logger.warning(f"Code execution failed: {result.error}")
 
@@ -818,7 +834,7 @@ class NetHackAgent:
 async def create_agent(
     llm_config: dict,
     skills_dir: str = "skills",
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
 ) -> NetHackAgent:
     """
     Factory function to create a configured agent.

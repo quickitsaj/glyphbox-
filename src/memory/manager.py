@@ -10,7 +10,6 @@ import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,7 @@ class MemoryManager:
         manager.close()
     """
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         """
         Initialize the memory manager.
 
@@ -52,7 +51,7 @@ class MemoryManager:
             db_path: Path to SQLite database (uses default if not specified)
         """
         self.db_path = Path(db_path) if db_path else Path(DEFAULT_DB_PATH)
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
 
     def initialize(self) -> None:
         """Initialize the database and create tables."""
@@ -80,7 +79,7 @@ class MemoryManager:
 
     # ==================== Episode Operations ====================
 
-    def create_episode(self, episode_id: str, metadata: Optional[dict] = None) -> int:
+    def create_episode(self, episode_id: str, metadata: dict | None = None) -> int:
         """
         Create a new episode record.
 
@@ -115,7 +114,7 @@ class MemoryManager:
         final_turns: int = 0,
         final_depth: int = 0,
         final_xp_level: int = 0,
-        death_reason: Optional[str] = None,
+        death_reason: str | None = None,
         skills_used: int = 0,
         skills_created: int = 0,
     ) -> None:
@@ -164,7 +163,7 @@ class MemoryManager:
         )
         self._conn.commit()
 
-    def get_episode(self, episode_id: str) -> Optional[dict]:
+    def get_episode(self, episode_id: str) -> dict | None:
         """Get episode by ID."""
         self._ensure_connected()
 
@@ -284,7 +283,7 @@ class MemoryManager:
         episode_id: str,
         level_number: int,
         branch: str = "main",
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Get dungeon level data."""
         self._ensure_connected()
 
@@ -339,7 +338,7 @@ class MemoryManager:
         position_y: int,
         items: list[str],
         branch: str = "main",
-        turn_discovered: Optional[int] = None,
+        turn_discovered: int | None = None,
     ) -> int:
         """Save or update a stash location."""
         self._ensure_connected()
@@ -383,7 +382,7 @@ class MemoryManager:
     def get_stashes(
         self,
         episode_id: str,
-        level_number: Optional[int] = None,
+        level_number: int | None = None,
         branch: str = "main",
     ) -> list[dict]:
         """Get stashes for an episode, optionally filtered by level."""
@@ -420,10 +419,10 @@ class MemoryManager:
         episode_id: str,
         appearance: str,
         object_class: str,
-        true_identity: Optional[str] = None,
-        buc_status: Optional[str] = None,
-        turn_discovered: Optional[int] = None,
-        discovery_method: Optional[str] = None,
+        true_identity: str | None = None,
+        buc_status: str | None = None,
+        turn_discovered: int | None = None,
+        discovery_method: str | None = None,
     ) -> int:
         """Record an item identification."""
         self._ensure_connected()
@@ -449,7 +448,7 @@ class MemoryManager:
         episode_id: str,
         appearance: str,
         object_class: str,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Get the identified name for an item appearance."""
         self._ensure_connected()
 
@@ -481,12 +480,12 @@ class MemoryManager:
         episode_id: str,
         turn: int,
         event_type: str,
-        description: Optional[str] = None,
-        level_number: Optional[int] = None,
-        branch: Optional[str] = None,
-        position_x: Optional[int] = None,
-        position_y: Optional[int] = None,
-        data: Optional[dict] = None,
+        description: str | None = None,
+        level_number: int | None = None,
+        branch: str | None = None,
+        position_x: int | None = None,
+        position_y: int | None = None,
+        data: dict | None = None,
     ) -> int:
         """Record a significant game event."""
         self._ensure_connected()
@@ -510,7 +509,7 @@ class MemoryManager:
     def get_events(
         self,
         episode_id: str,
-        event_type: Optional[str] = None,
+        event_type: str | None = None,
         limit: int = 100,
     ) -> list[dict]:
         """Get events for an episode."""
@@ -549,11 +548,11 @@ class MemoryManager:
         self,
         episode_id: str,
         monster_name: str,
-        level_number: Optional[int] = None,
-        branch: Optional[str] = None,
-        position_x: Optional[int] = None,
-        position_y: Optional[int] = None,
-        turn_seen: Optional[int] = None,
+        level_number: int | None = None,
+        branch: str | None = None,
+        position_x: int | None = None,
+        position_y: int | None = None,
+        turn_seen: int | None = None,
     ) -> int:
         """Record a monster encounter."""
         self._ensure_connected()

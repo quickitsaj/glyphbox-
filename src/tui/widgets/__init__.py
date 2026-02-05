@@ -1,10 +1,10 @@
 """TUI widgets for the NetHack agent viewer."""
 
-from .stats_bar import StatsBar
-from .game_screen import GameScreenWidget
-from .decision_log import DecisionLogWidget
-from .reasoning_panel import ReasoningPanel
 from .controls import ControlsWidget
+from .decision_log import DecisionLogWidget
+from .game_screen import GameScreenWidget
+from .reasoning_panel import ReasoningPanel
+from .stats_bar import StatsBar
 
 __all__ = [
     "StatsBar",

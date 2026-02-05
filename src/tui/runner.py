@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING
 
 from .events import (
     AgentStatusChanged,
@@ -14,6 +14,7 @@ from .events import (
 
 if TYPE_CHECKING:
     from textual.app import App
+
     from src.agent import NetHackAgent
     from src.api import NetHackAPI
 
@@ -59,8 +60,8 @@ class TUIAgentRunner:
         self.update_interval = update_interval
         self.screen_refresh_interval = screen_refresh_interval
 
-        self._task: Optional[asyncio.Task] = None
-        self._screen_task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
+        self._screen_task: asyncio.Task | None = None
         self._running = False
 
     async def start(self) -> None:
@@ -241,7 +242,7 @@ class TUIAgentRunner:
 
 
 async def create_watched_agent(
-    config: Optional[dict] = None,
+    config: dict | None = None,
 ) -> tuple["NetHackAgent", "NetHackAPI"]:
     """
     Create an agent and API instance ready for TUI watching.
@@ -255,8 +256,8 @@ async def create_watched_agent(
     from src.agent import NetHackAgent
     from src.agent.llm_client import LLMClient
     from src.api import NetHackAPI
-    from src.skills import SkillLibrary, SkillExecutor
     from src.config import load_config
+    from src.skills import SkillExecutor, SkillLibrary
 
     # Load configuration
     if config is None:

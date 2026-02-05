@@ -1,8 +1,8 @@
 """Controls widget with Start/Pause/Stop buttons."""
 
-from textual.widgets import Button, Static
-from textual.containers import Horizontal
 from textual.app import ComposeResult
+from textual.containers import Horizontal
+from textual.widgets import Button, Static
 
 from ..events import AgentStatusChanged
 

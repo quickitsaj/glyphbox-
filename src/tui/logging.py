@@ -7,11 +7,8 @@ agent activity including LLM calls, decisions, and skill executions.
 
 import json
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-
 
 # Custom log level for LLM interactions
 LLM_LEVEL = 25  # Between INFO (20) and WARNING (30)
@@ -28,7 +25,7 @@ class TUIRunLogger:
 
     LOG_DIR = Path("./data/logs")
 
-    def __init__(self, log_dir: Optional[Path] = None):
+    def __init__(self, log_dir: Path | None = None):
         """
         Initialize the run logger.
 
@@ -41,7 +38,7 @@ class TUIRunLogger:
         self.run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.log_file = self.log_dir / f"run_{self.run_id}.log"
 
-        self._file_handler: Optional[logging.FileHandler] = None
+        self._file_handler: logging.FileHandler | None = None
         self._original_handlers: list[logging.Handler] = []
 
     def setup(self) -> Path:
@@ -120,7 +117,7 @@ class LLMLogger:
         model: str,
         messages: list[dict],
         temperature: float,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
     ) -> None:
         """Log an LLM request."""
         self.logger.info("-" * 60)
@@ -166,8 +163,8 @@ class LLMLogger:
         self,
         content: str,
         model: str,
-        usage: Optional[dict] = None,
-        finish_reason: Optional[str] = None,
+        usage: dict | None = None,
+        finish_reason: str | None = None,
     ) -> None:
         """Log an LLM response."""
         tokens_str = ""
@@ -181,7 +178,7 @@ class LLMLogger:
             self.logger.info(f"  {line}")
         self.logger.info("-" * 60)
 
-    def log_error(self, error: str, context: Optional[dict] = None) -> None:
+    def log_error(self, error: str, context: dict | None = None) -> None:
         """Log an LLM error."""
         self.logger.error(f"LLM ERROR: {error}")
         if context:
@@ -197,10 +194,10 @@ class DecisionLogger:
     def log_decision(
         self,
         decision_type: str,
-        skill_name: Optional[str] = None,
-        params: Optional[dict] = None,
-        reasoning: Optional[str] = None,
-        code: Optional[str] = None,
+        skill_name: str | None = None,
+        params: dict | None = None,
+        reasoning: str | None = None,
+        code: str | None = None,
     ) -> None:
         """Log an agent decision."""
         parts = [f"DECISION: {decision_type}"]
@@ -240,10 +237,10 @@ class SkillLogger:
         self,
         skill_name: str,
         success: bool,
-        stopped_reason: Optional[str] = None,
+        stopped_reason: str | None = None,
         actions_taken: int = 0,
         turns_elapsed: int = 0,
-        result: Optional[dict] = None,
+        result: dict | None = None,
     ) -> None:
         """Log skill execution end."""
         status = "OK" if success else "FAIL"
@@ -269,7 +266,7 @@ class GameStateLogger:
         max_hp: int,
         position: tuple[int, int],
         dlvl: int,
-        message: Optional[str] = None,
+        message: str | None = None,
     ) -> None:
         """Log current game state."""
         self.logger.debug(
@@ -286,10 +283,10 @@ class GameStateLogger:
 
 
 # Global instance for the current run
-_current_run: Optional[TUIRunLogger] = None
+_current_run: TUIRunLogger | None = None
 
 
-def setup_run_logging(log_dir: Optional[Path] = None) -> Path:
+def setup_run_logging(log_dir: Path | None = None) -> Path:
     """
     Set up logging for a new TUI run.
 
@@ -317,7 +314,7 @@ def teardown_run_logging() -> None:
         _current_run = None
 
 
-def get_log_file() -> Optional[Path]:
+def get_log_file() -> Path | None:
     """Get the path to the current log file."""
     if _current_run:
         return _current_run.log_file

@@ -9,7 +9,6 @@ import json
 import zlib
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
 
 
 class TileType(Enum):
@@ -47,8 +46,8 @@ class TileMemory:
     walkable: bool = False
     last_seen_turn: int = 0
     times_visited: int = 0
-    trap_type: Optional[str] = None
-    feature_info: Optional[str] = None  # e.g., altar alignment
+    trap_type: str | None = None
+    feature_info: str | None = None  # e.g., altar alignment
     stepped: bool = False  # Has player physically walked on this tile?
     has_invis: bool = False  # Remembered invisible monster encounter
     was_doorway: bool = False  # Was this tile ever observed as a door?
@@ -153,12 +152,12 @@ class LevelMemory:
 
         # Statistics
         self.tiles_explored = 0
-        self.first_visited_turn: Optional[int] = None
-        self.last_visited_turn: Optional[int] = None
+        self.first_visited_turn: int | None = None
+        self.last_visited_turn: int | None = None
 
         # Key locations
-        self.upstairs_pos: Optional[tuple[int, int]] = None
-        self.downstairs_pos: Optional[tuple[int, int]] = None
+        self.upstairs_pos: tuple[int, int] | None = None
+        self.downstairs_pos: tuple[int, int] | None = None
 
     def update_tile(
         self,
@@ -169,8 +168,8 @@ class LevelMemory:
         char: str = " ",
         walkable: bool = True,
         turn: int = 0,
-        trap_type: Optional[str] = None,
-        feature_info: Optional[str] = None,
+        trap_type: str | None = None,
+        feature_info: str | None = None,
     ) -> None:
         """
         Update a tile in memory.
@@ -224,7 +223,7 @@ class LevelMemory:
         elif tile_type == TileType.TRAP and trap_type:
             self._add_feature("trap", x, y, {"trap_type": trap_type})
 
-    def get_tile(self, x: int, y: int) -> Optional[TileMemory]:
+    def get_tile(self, x: int, y: int) -> TileMemory | None:
         """Get tile at coordinates."""
         if 0 <= x < self.WIDTH and 0 <= y < self.HEIGHT:
             return self._tiles[y][x]
@@ -305,7 +304,7 @@ class LevelMemory:
         feature_type: str,
         x: int,
         y: int,
-        info: Optional[dict] = None,
+        info: dict | None = None,
     ) -> None:
         """Add or update a feature at a location."""
         # Check if feature already exists at this location
@@ -325,7 +324,7 @@ class LevelMemory:
             info=info or {},
         ))
 
-    def get_features(self, feature_type: Optional[str] = None) -> list[LevelFeature]:
+    def get_features(self, feature_type: str | None = None) -> list[LevelFeature]:
         """Get features, optionally filtered by type."""
         if feature_type:
             return [f for f in self._features if f.feature_type == feature_type]
@@ -413,7 +412,7 @@ class LevelMemory:
 
         return level
 
-    def to_ascii(self, player_pos: Optional[tuple[int, int]] = None) -> str:
+    def to_ascii(self, player_pos: tuple[int, int] | None = None) -> str:
         """
         Render level as ASCII art.
 
@@ -461,7 +460,7 @@ class DungeonMemory:
         level_number: int,
         branch: str = "main",
         create: bool = True,
-    ) -> Optional[LevelMemory]:
+    ) -> LevelMemory | None:
         """
         Get or create level memory.
 
@@ -537,7 +536,7 @@ class DungeonMemory:
     def find_feature(
         self,
         feature_type: str,
-        branch: Optional[str] = None,
+        branch: str | None = None,
     ) -> list[tuple[int, str, int, int]]:
         """
         Find all instances of a feature across levels.

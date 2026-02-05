@@ -7,7 +7,6 @@ data from the NetHack wiki or source code.
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -315,7 +314,7 @@ BENEFICIAL_CORPSES = {
 }
 
 
-def lookup_monster(name: str) -> Optional[MonsterInfo]:
+def lookup_monster(name: str) -> MonsterInfo | None:
     """
     Look up monster information.
 

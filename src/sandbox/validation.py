@@ -6,11 +6,9 @@ syntax errors and security issues early.
 """
 
 import ast
-import re
 from dataclasses import dataclass, field
-from typing import Optional
 
-from .exceptions import SkillSecurityError, SkillSyntaxError, SkillValidationError
+from .exceptions import SkillSecurityError, SkillSyntaxError
 
 # Allowed imports for skill code
 ALLOWED_IMPORTS = {
@@ -154,7 +152,7 @@ class ValidationResult:
     valid: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    function_name: Optional[str] = None
+    function_name: str | None = None
     has_correct_signature: bool = False
 
 
@@ -288,7 +286,7 @@ def validate_security(code: str, skill_name: str = "") -> list[str]:
     return visitor.warnings
 
 
-def validate_signature(code: str, skill_name: str = "") -> tuple[bool, Optional[str]]:
+def validate_signature(code: str, skill_name: str = "") -> tuple[bool, str | None]:
     """
     Validate that code defines a skill function with correct signature.
 

@@ -1,12 +1,5 @@
 """Memory and persistence layer for game state and cross-episode learning."""
 
-from .manager import MemoryManager
-from .working import (
-    EntitySighting,
-    PendingGoal,
-    TurnSnapshot,
-    WorkingMemory,
-)
 from .dungeon import (
     DungeonMemory,
     LevelFeature,
@@ -18,6 +11,13 @@ from .episode import (
     EpisodeEvent,
     EpisodeMemory,
     EpisodeStatistics,
+)
+from .manager import MemoryManager
+from .working import (
+    EntitySighting,
+    PendingGoal,
+    TurnSnapshot,
+    WorkingMemory,
 )
 
 __all__ = [

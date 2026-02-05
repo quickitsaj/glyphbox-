@@ -5,7 +5,6 @@ import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -69,7 +68,7 @@ class AgentConfig:
     # Tiles in each direction from player (7 = 15x15 total view)
     local_map_radius: int = 7
 
-    def get_reasoning_effort(self) -> Optional[ReasoningEffort]:
+    def get_reasoning_effort(self) -> ReasoningEffort | None:
         """Get reasoning effort as enum, or None if disabled."""
         try:
             effort = ReasoningEffort(self.reasoning.lower())
@@ -85,7 +84,7 @@ class EnvironmentConfig:
 
     name: str = "NetHackChallenge-v0"
     max_episode_steps: int = 1000000
-    render_mode: Optional[str] = None
+    render_mode: str | None = None
     character: str = "random"
 
 
@@ -117,7 +116,7 @@ class LoggingConfig:
 
     level: str = "INFO"
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    file: Optional[str] = "./data/agent.log"
+    file: str | None = "./data/agent.log"
     log_llm: bool = True
     log_actions: bool = True
 
@@ -133,7 +132,7 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
-def load_config(config_path: Optional[str] = None) -> Config:
+def load_config(config_path: str | None = None) -> Config:
     """
     Load configuration from YAML file with environment variable overrides.
 

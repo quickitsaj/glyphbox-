@@ -5,6 +5,6 @@ Contains BALROG progression scoring vendored from:
 https://github.com/balrog-ai/BALROG
 """
 
-from .progress import Progress, calculate_progress, ACHIEVEMENTS
+from .progress import ACHIEVEMENTS, Progress, calculate_progress
 
 __all__ = ["Progress", "calculate_progress", "ACHIEVEMENTS"]

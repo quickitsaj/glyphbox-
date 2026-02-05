@@ -1,7 +1,7 @@
 """Decision log widget showing scrolling history of agent decisions."""
 
-from textual.widgets import RichLog
 from rich.text import Text
+from textual.widgets import RichLog
 
 from ..events import DecisionMade, SkillExecuted
 
